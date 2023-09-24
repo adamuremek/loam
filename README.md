@@ -12,7 +12,7 @@ After cloning the godot source project onto your machine, clone the GDNet reposi
 
     cd <godot_source_location>\godot\modules
     
-    git clone https://github.com/A-K-U-dev/GDNet
+    git clone https://github.com/A-K-U-dev/GDNet.git
 
 ### Building Godot Mono From Source
 When building Godot Mono from source on windows, you have to set up a directory that the SCons build system can use to store Godot related .NET items (more information [here](https://docs.godotengine.org/en/stable/contributing/development/compiling/compiling_with_dotnet.html)).
