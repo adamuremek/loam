@@ -1,0 +1,66 @@
+# Compiled object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+*.ipa
+
+# Godot files that should be ignored
+*.import/
+*.mono/
+export.cfg
+export_presets.cfg
+
+# OS generated
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Visual Studio / MSVC files
+*.vcxproj
+*.vcxproj.filters
+*.sln
+*.suo
+*.user
+
+# Backup files
+*.bak
+
+# Other IDEs
+*.kdev4
+*.code-workspace
+*.vscode/
+
+# Godot temp files
+*.import
+
+# Pycahce
+__pycache__/
