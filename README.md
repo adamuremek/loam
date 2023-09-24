@@ -1,4 +1,5 @@
 # GDNet
+GDNet is a networking module for Godot 4.0 designed specifically for MMO network architecture.
 
 ## Windows Quick Start
 ### Prerequisites
