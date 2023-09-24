@@ -1,6 +1,15 @@
 # SCsub
 
 Import('env')
+Import("env_modules")
 
-#Add all cpp files to the build
-env.add_source_files(env.modules_sources, "*.cpp")
+env_gdnet = env_modules.Clone()
+
+
+
+
+# Compile and link the module's source files
+module_obj = []
+
+env_gdnet.add_source_files(module_obj, "*.cpp")
+env.modules_sources += module_obj
