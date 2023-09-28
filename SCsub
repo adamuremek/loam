@@ -1,14 +1,11 @@
 # SCsub
 
 Import('env')
-Import("env_modules")
 
-env_gdnet = env_modules.Clone()
+env_gdnet = env.Clone()
 
 # Compile and link the module's source files
-module_obj = []
-env_gdnet.Append(CPPPATH=["#modules/gdnet/include"])
-env_gdnet.add_source_files(module_obj, "*.cpp")
-env_gdnet.Append(LIBPATH=["#modules/gdnet/libs/WIND_x64"])
-env_gdnet.Append(LIBS=["GameNetworkingSockets"])
-env.modules_sources += module_obj
+env_gdnet.Append(CPPPATH=["include"])
+env_gdnet.add_source_files(env.modules_sources, "*.cpp")
+env.Append(LIBPATH=["#modules/gdnet/libs/WIND_x64"])
+env.Append(LIBS=["GameNetworkingSockets_s"])

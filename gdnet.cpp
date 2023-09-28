@@ -1,26 +1,116 @@
 #include "gdnet.h"
 #include "core/os/memory.h"
+#include "core/string/print_string.h"
+#include "core/error/error_macros.h"
 #include "core/core_string_names.h"
-#include <steam/steamnetworkingsockets.h>
+#include "include/steam/steamnetworkingsockets.h"
+#include "include/steam/isteamnetworkingutils.h"
+#include <thread>
 
 
 //===============GDNetServer Implementation===============//
 
-GDNetServer::GDNetServer() {
+GDNetServer *GDNetServer::s_pCallbackInstace = nullptr;
 
+GDNetServer::GDNetServer() {
+	s_pCallbackInstace = this;
+	m_pInterface = SteamNetworkingSockets();
+	m_hListenSock = k_HSteamListenSocket_Invalid;
+	m_hPollGroup = k_HSteamNetPollGroup_Invalid;
 }
 
 GDNetServer::~GDNetServer() {
+	
+}
 
+//==Private Methods==//
+
+void GDNetServer::steam_net_conn_status_changed_wrapper(SteamNetConnectionStatusChangedCallback_t* pInfo) {
+	s_pCallbackInstace->on_net_connection_status_changed(pInfo);
 }
 
 void GDNetServer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("start_server", "port"), &GDNetServer::start_server);
 }
 
-void GDNetServer::start_server(int port) {
+void GDNetServer::on_net_connection_status_changed(SteamNetConnectionStatusChangedCallback_t* pInfo) {
 
 }
+
+void GDNetServer::recieve_run_loop() {
+	while (m_serverLoop) {
+		poll_incoming_messages();
+		m_pInterface->RunCallbacks();
+	}
+}
+
+void GDNetServer::poll_incoming_messages() {
+	while (m_serverLoop) {
+		ISteamNetworkingMessage *pIncomingMessage = nullptr;
+		int numMsgs = m_pInterface->ReceiveMessagesOnPollGroup(m_hPollGroup, &pIncomingMessage, 1);
+
+		if (numMsgs == 0)
+			break;
+
+		if (numMsgs < 0) {
+			ERR_FAIL_MSG("Error checking messages");
+			m_serverLoop = false;
+			return;
+		}
+	}
+}
+
+//==Public Methods==//
+
+void GDNetServer::start_server(int port) {
+	//Define network interface to listen on
+	SteamNetworkingIPAddr serverAddress;
+	serverAddress.Clear();
+	serverAddress.m_port = port;
+
+	//Server Config (set callbacks)
+	SteamNetworkingConfigValue_t cfg;
+	cfg.SetPtr(k_ESteamNetworkingConfig_Callback_ConnectionStatusChanged, GDNetServer::steam_net_conn_status_changed_wrapper);
+
+	//Create a listening socket with the server config
+	m_hListenSock = m_pInterface->CreateListenSocketIP(serverAddress, 1, &cfg);
+
+	//Make sure the listening socket is valid, otherwise report an error and terminate start procedure.
+	if (m_hListenSock == k_HSteamListenSocket_Invalid)
+	{
+		ERR_FAIL_MSG(vformat("Failed to listen on port %d (invalid socket)", port));
+		return;
+	}
+
+	//Make sure the poll group is valid, otherwirse report and error and terminate the start prcedure.
+	if (m_hPollGroup == k_HSteamNetPollGroup_Invalid) {
+		ERR_FAIL_MSG(vformat("Failed to listen on port %d (invalid poll group)", port));
+	}
+
+	//Start the main server loop
+	m_serverLoop = true;
+	m_recieveLoopThread = std::thread(&GDNetServer::recieve_run_loop, this);
+
+	//TEMP: confirm that the server has started on the requested port:
+	print_line(vformat("Server has started on port %d!", port));
+}
+
+void GDNetServer::stop_server() {
+	m_serverLoop = false;
+
+	if (m_recieveLoopThread.joinable())
+		m_recieveLoopThread.join();
+
+	//Close the socket
+	m_pInterface->CloseListenSocket(m_hListenSock);
+	m_hListenSock = k_HSteamListenSocket_Invalid;
+
+	//Destroy poll group
+	m_pInterface->DestroyPollGroup(m_hPollGroup);
+	m_hPollGroup = k_HSteamNetPollGroup_Invalid;
+}
+
+
 
 //===============GDNetClient Implementation===============//
 

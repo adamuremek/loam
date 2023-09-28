@@ -50,3 +50,6 @@ Finally, the C# assemblies are built and linked:
     .\modules\mono\build_scripts\build_assemblies.py --godot-output-dir .\bin --push-nupkgs-local %APPDATA%\NuGet\MyLocalNugetSource
 
 Thats it! Now you should have an editor binary built under the `godot\bin` directory that contains GDNet functionality.
+
+
+https://github.com/godotengine/godot/issues/23687

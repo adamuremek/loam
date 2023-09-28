@@ -1135,42 +1135,6 @@ enum ESteamNetworkingConfigValue
 	/// Default is 512k (524288 bytes)
 	k_ESteamNetworkingConfig_SendBufferSize = 9,
 
-	/// [connection int32] Upper limit on total size (in bytes) of received messages
-	/// that will be buffered waiting to be processed by the application.  If this limit
-	/// is exceeded, packets will be dropped.  This is to protect us from a malicious
-	/// peer flooding us with messages faster than we can process them.
-	/// 
-	/// This must be bigger than k_ESteamNetworkingConfig_RecvMaxMessageSize
-	k_ESteamNetworkingConfig_RecvBufferSize = 47,
-
-	/// [connection int32] Upper limit on the number of received messages that will
-	/// that will be buffered waiting to be processed by the application.  If this limit
-	/// is exceeded, packets will be dropped.  This is to protect us from a malicious
-	/// peer flooding us with messages faster than we can pull them off the wire.
-	k_ESteamNetworkingConfig_RecvBufferMessages = 48,
-
-	/// [connection int32] Maximum message size that we are willing to receive.
-	/// if a client attempts to send us a message larger than this, the connection
-	/// will be immediately closed.
-	///
-	/// Default is 512k (524288 bytes).  Note that the peer needs to be able to
-	/// send a message this big.  (See k_cbMaxSteamNetworkingSocketsMessageSizeSend.)
-	k_ESteamNetworkingConfig_RecvMaxMessageSize = 49,
-
-	/// [connection int32] Max number of message segments that can be received
-	/// in a single UDP packet.  While decoding a packet, if the number of segments
-	/// exceeds this, we will abort further packet processing.
-	///
-	/// The default is effectively unlimited.  If you know that you very rarely
-	/// send small packets, you can protect yourself from malicious senders by
-	/// lowering this number.
-	/// 
-	/// In particular, if you are NOT using the reliability layer and are only using
-	/// SteamNetworkingSockets for datagram transport, setting this to a very low
-	/// number may be beneficial.  (We recommend a value of 2.)  Make sure your sender
-	/// disables Nagle!
-	k_ESteamNetworkingConfig_RecvMaxSegmentsPerPacket = 50,
-
 	/// [connection int64] Get/set userdata as a configuration option.
 	/// The default value is -1.   You may want to set the user data as
 	/// a config value, instead of using ISteamNetworkingSockets::SetConnectionUserData
@@ -1206,12 +1170,9 @@ enum ESteamNetworkingConfigValue
 	//    ensure you have the current value.
 	k_ESteamNetworkingConfig_ConnectionUserData = 40,
 
-	/// [connection int32] Minimum/maximum send rate clamp, in bytes/sec.
-	/// At the time of this writing these two options should always be set to
-	/// the same value, to manually configure a specific send rate.  The default
-	/// value is 256K.  Eventually we hope to have the library estimate the bandwidth
-	/// of the channel and set the send rate to that estimated bandwidth, and these
-	/// values will only set limits on that send rate.
+	/// [connection int32] Minimum/maximum send rate clamp, 0 is no limit.
+	/// This value will control the min/max allowed sending rate that 
+	/// bandwidth estimation is allowed to reach.  Default is 0 (no-limit)
 	k_ESteamNetworkingConfig_SendRateMin = 10,
 	k_ESteamNetworkingConfig_SendRateMax = 11,
 
@@ -1584,10 +1545,6 @@ enum ESteamNetworkingConfigValue
 	k_ESteamNetworkingConfig_LogLevel_P2PRendezvous = 17, // [connection int32] P2P rendezvous messages
 	k_ESteamNetworkingConfig_LogLevel_SDRRelayPings = 18, // [global int32] Ping relays
 
-	// Experimental.  Set the ECN header field on all outbound UDP packets
-	// -1 = the default, and means "don't set anything".
-	// 0..3 = set that value.  (Even though 0 is the default UDP ECN value, a 0 here means "explicitly set a 0".)
-	k_ESteamNetworkingConfig_ECN = 999,
 
 	// Deleted, do not use
 	k_ESteamNetworkingConfig_DELETED_EnumerateDevVars = 35,
@@ -1721,7 +1678,7 @@ inline SteamNetworkingPOPID CalculateSteamNetworkingPOPIDFromString( const char 
 	//
 	// There is also extra paranoia to make sure the bytes are not treated as signed.
 	SteamNetworkingPOPID result = (uint32)(uint8)pszCode[0] << 16U;
-	if ( result && pszCode[1] )
+	if ( pszCode[1] )
 	{
 		result |= ( (uint32)(uint8)pszCode[1] << 8U );
 		if ( pszCode[2] )
