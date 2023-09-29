@@ -7,7 +7,7 @@ void initialize_gdnet_module(ModuleInitializationLevel p_level) {
 		return;
 	}
 
-	ClassDB::register_class<GDNetServer>();
+	ClassDB::register_class<World>();
 	ClassDB::register_class<GDNetClient>();
 }
 

@@ -7,5 +7,6 @@ env_gdnet = env.Clone()
 # Compile and link the module's source files
 env_gdnet.Append(CPPPATH=["include"])
 env_gdnet.add_source_files(env.modules_sources, "*.cpp")
-env.Append(LIBPATH=["#modules/gdnet/libs/WIND_x64"])
-env.Append(LIBS=["GameNetworkingSockets_s"])
+
+env.Append(LIBPATH=["C:/Users/aruem/Desktop/godot/modules/gdnet/libs"])
+env.Append(LINKFLAGS="GameNetworkingSockets.lib")
