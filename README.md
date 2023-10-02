@@ -51,5 +51,3 @@ Finally, the C# assemblies are built and linked:
 
 Thats it! Now you should have an editor binary built under the `godot\bin` directory that contains GDNet functionality.
 
-
-https://github.com/godotengine/godot/issues/23687
