@@ -11,12 +11,11 @@ void initialize_gdnet_module(ModuleInitializationLevel p_level) {
 
 	ClassDB::register_class<World>();
 	ClassDB::register_class<Zone>();
-	ClassDB::register_class<ZoneInfo>();
 	ClassDB::register_class<Player>();
 	ClassDB::register_class<GDNet>();
 
 	p_gdnetSingleton = memnew(GDNet);
-	Engine::get_singleton()->add_singleton(Engine::Singleton("GDNet", GDNet::get_singleton()));
+	Engine::get_singleton()->add_singleton(Engine::Singleton("GDNet", GDNet::get_singleton().ptr(), "GDNet"));
 }
 
 void uninitialize_gdnet_module(ModuleInitializationLevel p_level) {

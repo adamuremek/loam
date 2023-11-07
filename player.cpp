@@ -12,15 +12,15 @@ Player *Player::s_pCallbackInstance = nullptr;
 
 Player::Player() {
 	s_pCallbackInstance = this;
+	m_world = nullptr;
 	m_hConnection = k_HSteamNetConnection_Invalid;
 	m_runLoop = false;
 	m_isConnectedToWorld = false;
+
+	print_line("poop cock");
 }
 
-
-Player::~Player() {
-	//disconnect_from_world();
-}
+Player::~Player() {}
 
 //==Private Methods==//
 
@@ -104,13 +104,30 @@ void Player::poll_incoming_messages() {
 		//Evaluate each message
 		for (int i = 0; i < numMsgs; i++) {
 			SteamNetworkingMessage_t *pMessage = pIncomingMsgs[i];
-			const char *data = static_cast<char *>(pMessage->m_pData);
+			const char *mssgData = static_cast<char *>(pMessage->m_pData);
 
 			//Check the type of message recieved
-			switch (data[0]) {
+			switch (mssgData[0]) {
 				case ASSIGN_PLAYER_ID: {
-					PlayerID_t id = deserialize_id(data, 1);
+					PlayerID_t id = deserialize_mini(mssgData);
 					print_line(vformat("Assigned player id is %d", id));
+
+					//Since this entire loop is running in a different thread from the main thread/game loop,
+					//the signal has to be queued to be emitted at the next game loop call.
+					m_world->call_deferred("emit_signal", "joined_world");
+					break;
+				}
+				case LOAD_ZONE_ACCEPT: {
+					ZoneID_t zoneId = deserialize_mini(mssgData);
+					print_line(vformat("Loading zone with id %d", zoneId));
+
+					m_world->instantiate_zone_by_id(zoneId);
+
+					break;
+				}
+				case PLAYER_ENTERED_ZONE: {
+					PlayerID_t playerId = deserialize_mini(mssgData);
+					
 					break;
 				}
 				default:
@@ -176,5 +193,9 @@ void Player::disconnect_from_world() {
 	m_hConnection = k_HSteamNetConnection_Invalid;
 
 	m_isConnectedToWorld = false;
+}
+
+HSteamNetConnection Player::get_world_connection() {
+	return m_hConnection;
 }
 

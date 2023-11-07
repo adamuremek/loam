@@ -3,46 +3,107 @@
 #include "include/steam/isteamnetworkingutils.h"
 
 
-PlayerID_t generate_player_id() {
-	PlayerID_t id = id_counter;
-	id_counter++;
 
-	return id;
-}
-
-SteamNetworkingMessage_t* create_player_id_assignment_message(const PlayerConnectionInfo& player) {
+SteamNetworkingMessage_t* create_mini_message(const int messageType, unsigned int value, const HSteamNetConnection& destination) {
 	//Create the message data
-	char data[3];
-	data[0] = ASSIGN_PLAYER_ID;
-	data[1] = player.id & 0XFF;
-	data[2] = (player.id >> 8) & 0xFF;
+	const int sizeOfData = 1 + sizeof(unsigned int);
+	char data[sizeOfData];
+
+	//Populate message data
+	for (int i = 1; i <= sizeof(unsigned int); i++) {
+		data[i] = static_cast<char>(value & 0xFF);
+		value >>= 8;
+	}
 
 	//Allocate a new message
-	SteamNetworkingMessage_t *pMessage = SteamNetworkingUtils()->AllocateMessage(3);
+	SteamNetworkingMessage_t *pMessage = SteamNetworkingUtils()->AllocateMessage(sizeOfData);
 
 	//Sanity check: make sure message was created
 	if (!pMessage) {
-		print_line("Unable to create message!");
+		ERR_FAIL_MSG("Unable to create message!");
 		return nullptr;
 	}
 
 	//Copy message data into the message's data buffer
-	memcpy(pMessage->m_pData, data, 3);
-	pMessage->m_cbSize = 3;
+	memcpy(pMessage->m_pData, data, sizeOfData);
+	pMessage->m_cbSize = sizeOfData;
 
 	//Set the message target connection
-	pMessage->m_conn = player.m_hConn;
+	pMessage->m_conn = destination;
 
 	return pMessage;
 }
 
-void send_message(const PlayerConnectionInfo &player, SteamNetworkingMessage_t *message) {
+SteamNetworkingMessage_t* create_small_message(const int messageType, unsigned int value1, unsigned int value2, const HSteamNetConnection& destination) {
+	// Create the message data
+	const int sizeOfData = 1 + (2 * sizeof(unsigned int));
+	char data[sizeOfData];
+
+	// Populate the message data
+	int i = 1;
+	for (i; i <= sizeof(unsigned int); i++) {
+		data[i] = static_cast<char>(value1 & 0xFF);
+		value1 >>= 8;
+	}
+
+	for (i; i <= 2 * sizeof(unsigned int); i++) {
+		data[i] = static_cast<char>(value2 & 0xFF);
+		value2 >>= 8;
+	}
+
+	// Allocate a new message
+	SteamNetworkingMessage_t *pMessage = SteamNetworkingUtils()->AllocateMessage(sizeOfData);
+
+	//Sanity check: make sure message was created
+	if (!pMessage) {
+		ERR_FAIL_MSG("Unable to create message!");
+		return nullptr;
+	}
+
+	//Copy message data into the message's data buffer
+	memcpy(pMessage->m_pData, data, sizeOfData);
+	pMessage->m_cbSize = sizeOfData;
+
+	//Set the message target connection
+	pMessage->m_conn = destination;
+
+	return pMessage;
+}
+
+unsigned int deserialize_mini(const char *data) {
+	unsigned int result = 0;
+
+	for (int i = 1; i <= sizeof(unsigned int); i++) {
+		result |= (static_cast<unsigned int>(static_cast<unsigned char>(data[i]) << (8 * i)));
+	}
+
+	return result;
+}
+
+void deserialize_small(const char* data, unsigned int& value1, unsigned int& value2) {
+	unsigned int result1 = 0, result2 = 0;
+
+	int i = 1;
+	for (i; i <= sizeof(unsigned int); i++) {
+		result1 |= (static_cast<unsigned int>(static_cast<unsigned char>(data[i]) << (8 * i)));
+	}
+
+	for (i; i <= 2 * sizeof(unsigned int); i++) {
+		result2 |= (static_cast<unsigned int>(static_cast<unsigned char>(data[i]) << (8 * i)));
+	}
+
+	value1 = result1;
+	value2 = result2;
+}
+
+
+void send_message(const HSteamNetConnection &destination, SteamNetworkingMessage_t *message) {
 	//Send the message
-	SteamNetworkingSockets()->SendMessageToConnection(player.m_hConn, message->m_pData, message->m_cbSize, k_nSteamNetworkingSend_Reliable, nullptr);
+	SteamNetworkingSockets()->SendMessageToConnection(destination, message->m_pData, message->m_cbSize, k_nSteamNetworkingSend_Reliable, nullptr);
 	//Free memory from the message
 	message->Release();
 }
 
-PlayerID_t deserialize_id(const char* data, int startIdx) {
-	return (unsigned short)(data[startIdx]) | ((unsigned short)(data[startIdx + 1]) << 8);
-}
+
+
+
