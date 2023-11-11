@@ -1,14 +1,13 @@
-#include "gdnet.h"
+#include "core/core_string_names.h"
+#include "core/error/error_macros.h"
 #include "core/os/memory.h"
 #include "core/string/print_string.h"
-#include "core/error/error_macros.h"
-#include "core/core_string_names.h"
+#include "gdnet.h"
 #include "include/steam/isteamnetworkingsockets.h"
 #include "include/steam/isteamnetworkingutils.h"
 #include <thread>
 
 Player *Player::s_pCallbackInstance = nullptr;
-
 
 Player::Player() {
 	s_pCallbackInstance = this;
@@ -24,7 +23,7 @@ Player::~Player() {}
 
 //==Private Methods==//
 
-void Player::steam_net_conn_status_changed_wrapper(SteamNetConnectionStatusChangedCallback_t* pInfo) {
+void Player::steam_net_conn_status_changed_wrapper(SteamNetConnectionStatusChangedCallback_t *pInfo) {
 	s_pCallbackInstance->on_net_connection_status_changed(pInfo);
 }
 
@@ -36,7 +35,7 @@ void Player::run_loop() {
 	}
 }
 
-void Player::on_net_connection_status_changed(SteamNetConnectionStatusChangedCallback_t* pInfo) {
+void Player::on_net_connection_status_changed(SteamNetConnectionStatusChangedCallback_t *pInfo) {
 	// What's the state of the connection?
 	switch (pInfo->m_info.m_eState) {
 		case k_ESteamNetworkingConnectionState_None:
@@ -93,13 +92,12 @@ void Player::poll_incoming_messages() {
 		if (numMsgs == 0) {
 			return;
 		}
-			
+
 		if (numMsgs < 0) {
 			ERR_FAIL_MSG("Error checking messages");
 			m_runLoop = false;
 			return;
 		}
-
 
 		//Evaluate each message
 		for (int i = 0; i < numMsgs; i++) {
@@ -127,7 +125,7 @@ void Player::poll_incoming_messages() {
 				}
 				case PLAYER_ENTERED_ZONE: {
 					PlayerID_t playerId = deserialize_mini(mssgData);
-					
+
 					break;
 				}
 				default:
@@ -174,7 +172,6 @@ void Player::connect_to_world(String world, int port) {
 
 	m_isConnectedToWorld = true;
 	print_line("Connection to world has initiated.");
-		
 }
 
 void Player::disconnect_from_world() {
@@ -198,4 +195,3 @@ void Player::disconnect_from_world() {
 HSteamNetConnection Player::get_world_connection() {
 	return m_hConnection;
 }
-

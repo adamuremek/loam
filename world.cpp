@@ -1,12 +1,11 @@
-#include "gdnet.h"
+#include "core/core_string_names.h"
+#include "core/error/error_macros.h"
 #include "core/os/memory.h"
 #include "core/string/print_string.h"
-#include "core/error/error_macros.h"
-#include "core/core_string_names.h"
+#include "gdnet.h"
 #include "include/steam/isteamnetworkingsockets.h"
 #include "include/steam/isteamnetworkingutils.h"
 #include <thread>
-
 
 //===============World Implementation===============//
 
@@ -17,7 +16,7 @@ World::World() {
 	m_hListenSock = k_HSteamListenSocket_Invalid;
 	m_hPollGroup = k_HSteamNetPollGroup_Invalid;
 	m_runLoop = false;
-	GDNet::get_singleton()->m_player.m_world = this;
+	GDNet::get_singleton()->m_player->m_world = this;
 }
 
 World::~World() {
@@ -29,7 +28,7 @@ World::~World() {
 //==Private Methods==//
 
 //=======================================GAMENETWORKINGSOCKETS STUFF=======================================//
-void World::steam_net_conn_status_changed_wrapper(SteamNetConnectionStatusChangedCallback_t* pInfo) {
+void World::steam_net_conn_status_changed_wrapper(SteamNetConnectionStatusChangedCallback_t *pInfo) {
 	s_pCallbackInstace->on_net_connection_status_changed(pInfo);
 }
 
@@ -87,10 +86,9 @@ void World::player_disconnected(HSteamNetConnection playerConnection) {
 	remove_player(playerConnection);
 }
 
-void World::on_net_connection_status_changed(SteamNetConnectionStatusChangedCallback_t* pInfo) {
+void World::on_net_connection_status_changed(SteamNetConnectionStatusChangedCallback_t *pInfo) {
 	//What is the state of the connection?
 	switch (pInfo->m_info.m_eState) {
-
 		case k_ESteamNetworkingConnectionState_None:
 			//NOTE: Callbacks will be sent here when connections are destoryed. These can be ignored
 			break;
@@ -104,7 +102,7 @@ void World::on_net_connection_status_changed(SteamNetConnectionStatusChangedCall
 			print_line("Player connection has dropped improperly!");
 			break;
 
-		case k_ESteamNetworkingConnectionState_Connecting: 
+		case k_ESteamNetworkingConnectionState_Connecting:
 			player_connecting(pInfo->m_hConn);
 			break;
 
@@ -112,7 +110,7 @@ void World::on_net_connection_status_changed(SteamNetConnectionStatusChangedCall
 			// We will get a callback immediately after accepting the connection.
 			player_connected(pInfo->m_hConn);
 			break;
-			
+
 		default:
 			//No mans land
 			//God knows what the hell would end up here. Hopefully nothing important :3
@@ -196,7 +194,6 @@ void World::remove_player(HSteamNetConnection hConn) {
 		m_worldPlayerInfoById.erase(info.id);
 		m_worldPlayerInfoByConnection.erase(hConn);
 	}
-		
 
 	//Close connection witht the player
 	if (!SteamNetworkingSockets()->CloseConnection(hConn, 0, nullptr, false)) {
@@ -221,19 +218,17 @@ void World::_bind_methods() {
 void World::_notification(int n_type) {
 	switch (n_type) {
 		case NOTIFICATION_EXIT_TREE: {
-
 			//If the application closes, the world node will be cleaned up.
 			//When the world node is cleaned up, properly disconnect the player from the world
 			//to ensure a smooth cleanup.
-			if (GDNet::get_singleton()->m_player.m_isConnectedToWorld) {
-				GDNet::get_singleton()->m_player.disconnect_from_world();
+			if (GDNet::get_singleton()->m_player->m_isConnectedToWorld) {
+				GDNet::get_singleton()->m_player->disconnect_from_world();
 			}
 
 			break;
 		}
 	}
 }
-
 
 //==Public Methods==//
 
@@ -272,14 +267,13 @@ void World::start_world(int port) {
 
 	//Server Config (set callbacks)
 	SteamNetworkingConfigValue_t cfg;
-	cfg.SetPtr(k_ESteamNetworkingConfig_Callback_ConnectionStatusChanged, (void*)World::steam_net_conn_status_changed_wrapper);
-	
+	cfg.SetPtr(k_ESteamNetworkingConfig_Callback_ConnectionStatusChanged, (void *)World::steam_net_conn_status_changed_wrapper);
+
 	//Create a listening socket with the server config
 	m_hListenSock = SteamNetworkingSockets()->CreateListenSocketIP(worldInfo, 1, &cfg);
 
 	//Make sure the listening socket is valid, otherwise report an error and terminate start procedure.
-	if (m_hListenSock == k_HSteamListenSocket_Invalid)
-	{
+	if (m_hListenSock == k_HSteamListenSocket_Invalid) {
 		ERR_FAIL_MSG(vformat("Failed to listen on port %d (invalid socket)", port));
 		return;
 	}
@@ -299,7 +293,6 @@ void World::start_world(int port) {
 
 	//TEMP: confirm that the server has started on the requested port:
 	print_line(vformat("Server has started on port %d!", port));
-	
 }
 
 void World::stop_world() {
@@ -308,7 +301,6 @@ void World::stop_world() {
 	if (m_runLoopThread.joinable()) {
 		m_runLoopThread.join();
 	}
-		
 
 	//Close the socket
 	SteamNetworkingSockets()->CloseListenSocket(m_hListenSock);
@@ -323,14 +315,14 @@ void World::stop_world() {
 }
 
 void World::join_world(String world, int port) {
-	if (!GDNet::get_singleton()->m_player.m_isConnectedToWorld) {
-		GDNet::get_singleton()->m_player.connect_to_world(world, port);
+	if (!GDNet::get_singleton()->m_player->m_isConnectedToWorld) {
+		GDNet::get_singleton()->m_player->connect_to_world(world, port);
 	}
 }
 
 void World::leave_world() {
-	if (GDNet::get_singleton()->m_player.m_isConnectedToWorld) {
-		GDNet::get_singleton()->m_player.disconnect_from_world();
+	if (GDNet::get_singleton()->m_player->m_isConnectedToWorld) {
+		GDNet::get_singleton()->m_player->disconnect_from_world();
 	}
 }
 
@@ -341,18 +333,16 @@ bool World::load_zone(String zoneName) {
 	}
 
 	print_line("Finding Zone...");
-	
+
 	for (std::map<ZoneID_t, Zone *>::const_iterator pair = m_registeredZones.begin(); pair != m_registeredZones.end(); ++pair) {
 		if (pair->second->get_name() == zoneName) {
 			print_line("Zone Found! sending load zone request.");
 			ZoneID_t zoneId = pair->second->get_zone_id();
-			SteamNetworkingMessage_t *pLoadZoneRequest = create_mini_message(LOAD_ZONE_REQUEST, zoneId, GDNet::get_singleton()->m_player.get_world_connection());
-			send_message(GDNet::get_singleton()->m_player.get_world_connection(), pLoadZoneRequest);
+			SteamNetworkingMessage_t *pLoadZoneRequest = create_mini_message(LOAD_ZONE_REQUEST, zoneId, GDNet::get_singleton()->m_player->get_world_connection());
+			send_message(GDNet::get_singleton()->m_player->get_world_connection(), pLoadZoneRequest);
 			return true;
 		}
 	}
 
 	return false;
 }
-
-

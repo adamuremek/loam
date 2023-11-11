@@ -1,31 +1,32 @@
 #ifndef GDNET_H
 #define GDNET_H
 
-#include "scene/main/node.h"
 #include "core/object/ref_counted.h"
-#include "scene/resources/packed_scene.h"
 #include "include/steam/isteamnetworkingsockets.h"
-#include <thread>
+#include "scene/main/node.h"
+#include "scene/resources/packed_scene.h"
 #include <map>
 #include <stack>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
 //===============Data and Types===============//
 //Control Message Types
-#define ASSIGN_PLAYER_ID 1
-#define LOAD_ZONE_REQUEST 2
-#define LOAD_ZONE_ACCEPT 3
-#define LOAD_ZONE_DENY 4
-#define PLAYER_ENTERED_ZONE 5
-#define PLAYER_LEFT_ZONE 6
-#define INSTANTIATE_NETWORK_ENTITY_REQUEST 7 
-#define INSTANTIATE_NETWORK_ENTITY 8
+#define ASSIGN_PLAYER_ID static_cast<unsigned char>(0x01)
+#define LOAD_ZONE_REQUEST static_cast<unsigned char>(0x02)
+#define LOAD_ZONE_ACCEPT static_cast<unsigned char>(0x03)
+#define LOAD_ZONE_DENY static_cast<unsigned char>(0x04)
+#define PLAYER_ENTERED_ZONE static_cast<unsigned char>(0x05)
+#define PLAYER_LEFT_ZONE static_cast<unsigned char>(0x06)
+#define INSTANTIATE_NETWORK_ENTITY_REQUEST static_cast<unsigned char>(0x07)
+#define INSTANTIATE_NETWORK_ENTITY static_cast<unsigned char>(0x08)
 
 typedef unsigned int PlayerID_t;
 typedef unsigned int EntityNetworkID_t;
 typedef unsigned int EntityID_t;
 typedef unsigned short ZoneID_t;
+typedef unsigned char MessageType_t;
 
 struct PlayerConnectionInfo {
 	//Connection handle (id)
@@ -39,13 +40,18 @@ class Player;
 class World;
 
 //===============Messaging===============//
-SteamNetworkingMessage_t *create_mini_message(const int messageType, unsigned int value, const HSteamNetConnection &destination);
-SteamNetworkingMessage_t *create_small_message(const int messageType, unsigned int value1, unsigned int value2, const HSteamNetConnection &destination);
+SteamNetworkingMessage_t *allocate_message(const unsigned char* data, const int sizeOfData, const HSteamNetConnection &destination);
+SteamNetworkingMessage_t *create_mini_message(MessageType_t messageType, unsigned int value, const HSteamNetConnection &destination);
+SteamNetworkingMessage_t *create_small_message(MessageType_t messageType, unsigned int value1, unsigned int value2, const HSteamNetConnection &destination);
+SteamNetworkingMessage_t *instantiate_entity_message(const EntityID_t entityID, String parentNode, const HSteamNetConnection &destination);
+
+void serialize_uint(const unsigned int value, int startIdx, unsigned char* buffer);
+void copy_string_to_buffer(const char* string, unsigned char* buffer, int startIDx, int stringSize);
+
 unsigned int deserialize_mini(const char *data);
 void deserialize_small(const char *data, unsigned int &value1, unsigned int &value2);
 
 void send_message(const HSteamNetConnection &destination, SteamNetworkingMessage_t *message);
-
 
 //===============ID Generator===============//
 
@@ -66,7 +72,6 @@ public:
 	static void freeNetworkEntityID(EntityNetworkID_t networkEntityID);
 };
 
-
 //===============GDNet Singleton===============//
 
 class GDNet : public RefCounted {
@@ -86,7 +91,7 @@ public:
 	bool m_isInitialized;
 	bool m_isClient;
 	bool m_isServer;
-	Player m_player;
+	Player *m_player;
 	std::map<EntityID_t, Ref<PackedScene>> m_entitiesById;
 	std::map<String, EntityID_t> m_entityIdByName;
 
@@ -110,20 +115,17 @@ protected:
 	static void _bind_methods();
 };
 
-
 //===============Network Entity===============//
 
 class NetworkEntity : public Node {
 	GDCLASS(NetworkEntity, Node);
 
 private:
-
 protected:
 	static void _bind_methods();
 	void _notification(int n_type);
 
 public:
-
 };
 
 //===============Player===============//
@@ -190,9 +192,9 @@ public:
 	void instantiate_zone();
 
 	void add_player(PlayerID_t playerID);
-	void create_network_entity(String entityName);
+	void instantiate_network_entity(EntityID_t entityId, String parentNode);
+	void create_network_entity(String entityName, String parentNode);
 };
-
 
 //===============World===============//
 

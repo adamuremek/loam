@@ -1,6 +1,6 @@
 #include "gdnet.h"
-#include "include/steam/steamnetworkingsockets.h"
 #include "core/io/dir_access.h"
+#include "include/steam/steamnetworkingsockets.h"
 
 Ref<GDNet> GDNet::s_singleton = nullptr;
 
@@ -11,9 +11,7 @@ GDNet::GDNet() {
 	m_isServer = false;
 }
 
-GDNet::~GDNet() {
-	s_singleton = nullptr;
-}
+GDNet::~GDNet() {}
 
 void GDNet::_bind_methods() {
 	ClassDB::bind_method("init_gdnet", &GDNet::init_gdnet);
@@ -23,7 +21,6 @@ void GDNet::_bind_methods() {
 Ref<GDNet> GDNet::get_singleton() {
 	return s_singleton;
 }
-
 
 bool GDNet::load_network_entities() {
 	String path = "res://NetworkEntities/";
@@ -43,7 +40,7 @@ bool GDNet::load_network_entities() {
 	//Iterate through files in the directory
 	String file_name = dir->_get_next();
 	while (file_name != "") {
-		//If the current file is a directory, 
+		//If the current file is a directory,
 		if (dir->current_is_dir()) {
 			file_name = dir->_get_next();
 			continue;
@@ -59,7 +56,6 @@ bool GDNet::load_network_entities() {
 				print_line(root_node->get_class_name());
 				root_node->queue_free();
 			}
-			
 		}
 
 		file_name = dir->_get_next();
@@ -81,7 +77,7 @@ void GDNet::init_gdnet() {
 		ERR_FAIL_MSG("Could not load network entities!");
 		return;
 	}
-		
+
 	m_isInitialized = true;
 	print_line("GDNet has been initialized!");
 }

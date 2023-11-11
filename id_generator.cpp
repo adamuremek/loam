@@ -4,6 +4,10 @@
 unsigned int IDGenerator::s_playerIDCounter = 1;
 unsigned int IDGenerator::s_networkEntityIDCounter = 1;
 
+std::stack<unsigned int> IDGenerator::freePlayerIDs;
+std::stack<unsigned int> IDGenerator::freeNetworkEntityIDs;
+std::unordered_set<unsigned int> IDGenerator::usedPlayerIDs;
+std::unordered_set<unsigned int> IDGenerator::usedNetworkEntityIDs;
 
 PlayerID_t IDGenerator::generatePlayerID() {
 	unsigned int newID;

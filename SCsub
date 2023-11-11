@@ -1,16 +1,26 @@
 # SCsub
+import platform
 
 Import('env')
+Import('env_modules')
 
-env_gdnet = env.Clone()
+
+
+env_gdnet = env_modules.Clone()
 
 # Compile and link the module's source files
 env_gdnet.Append(CPPPATH=["include"])
-env_gdnet.add_source_files(env.modules_sources, "*.cpp")
+
+module_obj = []
+env_gdnet.add_source_files(module_obj, "*.cpp")
+env.modules_sources += module_obj
 
 #Turn off strcpy warnings that throws errors in the steamworks library
 env.Append(CPPDEFINES=["_CRT_SECURE_NO_WARNINGS"])
 
-
-env.Append(LIBPATH=["C:/Users/aruem/Desktop/godot/modules/gdnet/libs"])
-env.Append(LINKFLAGS="GameNetworkingSockets.lib")
+if platform.system() == "Windows":
+    env.Append(LIBPATH=["#modules/gdnet/libs/WIN"])
+    env.Append(LINKFLAGS="GameNetworkingSockets.lib")
+elif platform.system() == "Darwin":
+    env.Append(LIBPATH=["#modules/gdnet/libs/MACOS_INTEL"])
+    env.Append(LIBS="libGameNetworkingSockets")
