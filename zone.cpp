@@ -1,24 +1,9 @@
 #include "gdnet.h"
 
 //===============Zone Implementation===============//
+Zone::Zone() {}
 
-ZoneID_t Zone::m_zone_id_counter = 0;
-
-Zone::Zone() {
-	m_parentWorld = nullptr;
-	m_zoneInstance = nullptr;
-	m_instantiated = false;
-	m_zoneId = 0;
-}
-
-Zone::~Zone() {
-	if (m_parentWorld) {
-		m_parentWorld->unregister_zone(this);
-	}
-
-	m_parentWorld = nullptr;
-	m_zoneInstance = nullptr;
-}
+Zone::~Zone() {}
 
 //==Protected Methods==//
 
@@ -32,20 +17,17 @@ void Zone::_bind_methods() {
 }
 
 void Zone::_notification(int n_type) {
+	if(Engine::get_singleton()->is_editor_hint()){
+		return;
+	}
+
 	switch (n_type) {
 		case NOTIFICATION_ENTER_TREE: {
-			m_zoneId = m_zone_id_counter;
-			m_zone_id_counter++;
-
-			Node *parent = get_parent();
-			World *parentWorld = Object::cast_to<World>(parent);
-			if (parentWorld) {
-				m_parentWorld = parentWorld;
-				m_parentWorld->register_zone(this);
-				print_line(vformat("Registered zone with id %d.", m_zoneId));
-			} else {
-				print_line("WARNING: Zones should be parented to World nodes!");
-			}
+			GDNet::singleton->register_zone(this);
+			break;
+		}
+		case NOTIFICATION_EXIT_TREE: {
+			GDNet::singleton->unregister_zone(this);
 			break;
 		}
 	}
@@ -71,50 +53,76 @@ void Zone::instantiate_zone() {
 	}
 
 	m_zoneInstance = m_zoneScene->instantiate();
+	//This is using the built in "add_child" mehtod to append the instance to the zone.
 	call_deferred("add_child", m_zoneInstance);
 	m_instantiated = true;
 }
 
-void Zone::add_player(PlayerID_t playerID) {
-	m_playersInZone.push_back(playerID);
+void Zone::add_player(PlayerID_t playerId) {
+	m_playersInZone.push_back(playerId);
+}
+
+bool Zone::player_in_zone(PlayerID_t playerId) {
+	return std::find(m_playersInZone.begin(), m_playersInZone.end(), playerId) != m_playersInZone.end();
 }
 
 void Zone::instantiate_network_entity(EntityID_t entityId, String parentNode) {
-	//Try to find the requested parent node
-	Node* parent = this->get_node(parentNode);
-
-	//Error and return if the requested parent node could not be found
-	if(parent == nullptr){
-		ERR_PRINT(vformat("Requested parent ndoe [%s] does not exist!", parentNode));
-		return;
-	}else{
-		//Instantiate the entity and
-		Ref<PackedScene> requestedEntity = GDNet::get_singleton()->m_entitiesById[entityId];
-		Node *entityInstance = requestedEntity->instantiate();
-		parent->add_child(entityInstance);
-	}
+//	//Try to find the requested parent node
+//	Node* parent = this->get_node(parentNode);
+//
+//	//Error and return if the requested parent node could not be found
+//	if(parent == nullptr){
+//		ERR_PRINT(vformat("Requested parent ndoe [%s] does not exist!", parentNode));
+//		return;
+//	}else{
+//		//Instantiate the entity and
+//		Ref<PackedScene> requestedEntity = GDNet::get_singleton()->m_entitiesById[entityId];
+//		Node *entityInstance = requestedEntity->instantiate();
+//		parent->add_child(entityInstance);
+//	}
 }
 
-void Zone::create_network_entity(String entityName, String parentNode) {
-	//Create a placeholder to store the entity's respecitve ID if the string maps to a proper entity
-	EntityID_t entityId;
-	//Try to find the entity by name
-	std::map<String, EntityID_t>::iterator it = GDNet::get_singleton()->m_entityIdByName.find(entityName);
 
-	if (it != GDNet::get_singleton()->m_entityIdByName.end()) {
-		//If the entity with the given name exists:
-		entityId = it->second;
-	} else {
-		//If no entity with the given name exists, then error out and retrun
-		ERR_PRINT(vformat("Could not find entity with name %s!", entityName));
+
+void Zone::create_entity(Ref<EntityInfo> entityInfo) {
+	//Make sure a world is being hosted or a world is connected to before trying to instantiate entities.
+	if(!GDNet::singleton->is_client() || !GDNet::singleton->is_server()){
+		ERR_PRINT("Cannot create an entity if not hosting or connected to a world!");
 		return;
 	}
 
-	if (GDNet::get_singleton()->is_server()) {
-		//Instantiate the entity server side
-		instantiate_network_entity(entityId, parentNode);
-	} else if (GDNet::get_singleton()->is_client()) {
-		ISteamNetworkingMessage *pCreateEntityRequest = create_small_message(INSTANTIATE_NETWORK_ENTITY_REQUEST, m_zoneId, entityId, GDNet::get_singleton()->m_player->get_world_connection());
-		send_message(GDNet::get_singleton()->m_player->get_world_connection(), pCreateEntityRequest);
+	//Make sure zone has been instantiated before calling
+	if(!m_instantiated){
+		ERR_PRINT("Cannot create entity in zone, zone has not been instantiated!");
+		return;
 	}
+
+	//If an associated player is defined, make sure they are in the zone.
+	if(entityInfo->m_entityInfo.associatedPlayer > 0 && !player_in_zone(entityInfo->m_entityInfo.associatedPlayer)){
+		ERR_PRINT(vformat("Cannot associate entity with player \"ID: %d\". They are not in this zone!", entityInfo->m_entityInfo.associatedPlayer));
+		return;
+	}
+
+	//Make sure all other user entered data is valid
+	if(!entityInfo->verify_info()){
+		ERR_PRINT("Cannot create entity, entity info is not valid!");
+		return;
+	}
+
+	//Serialize the entity info
+	entityInfo->serialize_info();
+	unsigned char* data = entityInfo->m_entityInfo.dataBuffer.data();
+	int dataLen = entityInfo->m_entityInfo.dataBuffer.size();
+
+
+	if(GDNet::singleton->is_client()){
+		//Make this message an entity creation request
+		data[0] = CREATE_ENTITY_REQUEST;
+
+		//Create and send the message
+		SteamNetworkingMessage_t* mssg = allocate_message(data, dataLen, GDNet::singleton->world->m_worldConnection);
+		send_message(GDNet::singleton->world->m_worldConnection, mssg);
+	}
+
+
 }

@@ -2,37 +2,44 @@
 #include "core/io/dir_access.h"
 #include "include/steam/steamnetworkingsockets.h"
 
-Ref<GDNet> GDNet::s_singleton = nullptr;
+GDNet* GDNet::singleton = nullptr;
+ZoneID_t GDNet::m_zoneIDCounter = 1;
 
 GDNet::GDNet() {
-	s_singleton = Ref<GDNet>(this);
+	world = memnew(World);
 	m_isInitialized = false;
 	m_isClient = false;
 	m_isServer = false;
 }
 
-GDNet::~GDNet() {}
+GDNet::~GDNet() {
+	memdelete(world);
+}
+
+void GDNet::cleanup() {
+	world->cleanup();
+}
 
 void GDNet::_bind_methods() {
 	ClassDB::bind_method("init_gdnet", &GDNet::init_gdnet);
 	ClassDB::bind_method("shutdown_gdnet", &GDNet::shutdown_gdnet);
+	ClassDB::bind_method("get_world_singleton", &GDNet::get_world_singleton);
 }
 
-Ref<GDNet> GDNet::get_singleton() {
-	return s_singleton;
-}
-
-bool GDNet::load_network_entities() {
+bool GDNet::register_network_entities() {
 	String path = "res://NetworkEntities/";
 
-	Error openErr = OK;
 	//Try opening the "NetworkEntities" special directory.
+	Error openErr = OK;
 	Ref<DirAccess> dir = DirAccess::open(path, &openErr);
 
 	if (openErr != OK) {
 		ERR_PRINT("Failed to find the 'NetworkEntities' directory!");
 		return false;
 	}
+
+	//Define an id counter for assigning entity ids
+	EntityID_t newEntityId = 1;
 
 	//Start directory listing
 	dir->list_dir_begin();
@@ -46,24 +53,55 @@ bool GDNet::load_network_entities() {
 			continue;
 		}
 
+		//When a scene is found, open it and evaluate it
 		if (file_name.get_extension() == "tscn" || file_name.get_extension() == "scn") {
+			//Get the packedscene from the scene's full path
 			String full_path = path.path_join(file_name);
-
 			Ref<PackedScene> network_entity_scene = ResourceLoader::load(full_path);
 
+			// Verify that the packed scene is a network entity type, then add it to the network entity registry
 			if (network_entity_scene.is_valid()) {
 				Node *root_node = network_entity_scene->instantiate();
-				print_line(root_node->get_class_name());
+				if(root_node->get_class_name() == "NetworkEntity"){
+					NetworkEntityInfo info{};
+					info.id = newEntityId;
+					info.name = file_name.get_basename();
+					info.scene = network_entity_scene;
+
+					//Register entity info
+					m_networkEntityRegistry[newEntityId] = info;
+
+					//Increment new entity id for future entities
+					newEntityId++;
+				}
 				root_node->queue_free();
 			}
 		}
-
 		file_name = dir->_get_next();
 	}
 
 	dir->list_dir_end();
 
 	return true;
+}
+
+World *GDNet::get_world_singleton() {
+	return  world;
+}
+
+void GDNet::register_zone(Zone *zone) {
+	ZoneInfo zoneInfo{};
+	zoneInfo.id = m_zoneIDCounter;
+	zoneInfo.name = zone->get_name();
+	zoneInfo.zone = zone;
+
+	m_zoneRegistry[zoneInfo.id] = zoneInfo;
+	m_zoneIDCounter++;
+}
+
+void GDNet::unregister_zone(Zone *zone) {
+	m_zoneRegistry.erase(zone->m_zoneId);
+	zone->m_zoneId = 0;
 }
 
 void GDNet::init_gdnet() {
@@ -73,10 +111,11 @@ void GDNet::init_gdnet() {
 		return;
 	}
 
-	if (!load_network_entities()) {
+	if (!register_network_entities()) {
 		ERR_FAIL_MSG("Could not load network entities!");
 		return;
 	}
+
 
 	m_isInitialized = true;
 	print_line("GDNet has been initialized!");
@@ -95,3 +134,25 @@ bool GDNet::is_client() {
 bool GDNet::is_server() {
 	return m_isServer;
 }
+
+bool GDNet::zone_exists(ZoneID_t zoneId) {
+	return m_zoneRegistry.find(zoneId) != m_zoneRegistry.end();
+}
+
+bool GDNet::entity_exists(EntityID_t entityId) {
+	return m_networkEntityRegistry.find(entityId) != m_networkEntityRegistry.end();
+}
+
+EntityID_t GDNet::get_entity_id_by_name(String entityName) {
+	std::map<EntityID_t, NetworkEntityInfo>::iterator it;
+
+	for(it = m_networkEntityRegistry.begin(); it != m_networkEntityRegistry.end(); ++it){
+		if(it->second.name == entityName){
+			return it->first;
+		}
+	}
+
+	return 0;
+}
+
+

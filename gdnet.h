@@ -10,6 +10,8 @@
 #include <thread>
 #include <unordered_set>
 #include <vector>
+#include <algorithm>
+#include <cstdint>
 
 //===============Data and Types===============//
 //Control Message Types
@@ -19,36 +21,58 @@
 #define LOAD_ZONE_DENY static_cast<unsigned char>(0x04)
 #define PLAYER_ENTERED_ZONE static_cast<unsigned char>(0x05)
 #define PLAYER_LEFT_ZONE static_cast<unsigned char>(0x06)
-#define INSTANTIATE_NETWORK_ENTITY_REQUEST static_cast<unsigned char>(0x07)
-#define INSTANTIATE_NETWORK_ENTITY static_cast<unsigned char>(0x08)
+#define CREATE_ENTITY_REQUEST static_cast<unsigned char>(0x07)
+#define CREATE_ENTITY_START static_cast<unsigned char>(0x08)
+#define CREATE_ENTITY_FINISH static_cast<unsigned char>(0x09)
 
-typedef unsigned int PlayerID_t;
-typedef unsigned int EntityNetworkID_t;
-typedef unsigned int EntityID_t;
-typedef unsigned short ZoneID_t;
-typedef unsigned char MessageType_t;
+typedef uint32_t PlayerID_t;
+typedef uint32_t EntityNetworkID_t;
+typedef uint32_t EntityID_t;
+typedef uint16_t ZoneID_t;
+typedef uint8_t MessageType_t;
 
-struct PlayerConnectionInfo {
+//Forward declarations
+class Zone;
+class World;
+
+struct PlayerInfo {
 	//Connection handle (id)
 	HSteamNetConnection m_hConn;
 	PlayerID_t id;
 };
 
-//===============Forward Declarations===============//
-class Zone;
-class Player;
-class World;
+struct NetworkEntityInfo{
+	EntityID_t id;
+	String name;
+	Ref<PackedScene> scene;
+};
+
+struct ZoneInfo{
+	ZoneID_t id;
+	String name;
+	Zone* zone;
+};
+
+struct EntityInfo_t{
+	String entityName;
+	EntityID_t entityId;
+	PlayerID_t associatedPlayer;
+	std::vector<unsigned char> dataBuffer;
+};
 
 //===============Messaging===============//
 SteamNetworkingMessage_t *allocate_message(const unsigned char* data, const int sizeOfData, const HSteamNetConnection &destination);
 SteamNetworkingMessage_t *create_mini_message(MessageType_t messageType, unsigned int value, const HSteamNetConnection &destination);
 SteamNetworkingMessage_t *create_small_message(MessageType_t messageType, unsigned int value1, unsigned int value2, const HSteamNetConnection &destination);
-SteamNetworkingMessage_t *instantiate_entity_message(const EntityID_t entityID, String parentNode, const HSteamNetConnection &destination);
+//SteamNetworkingMessage_t *instantiate_entity_message(const EntityID_t entityID, String parentNode, const HSteamNetConnection &destination);
 
-void serialize_uint(const unsigned int value, int startIdx, unsigned char* buffer);
+void serialize_int(int value, int startIdx, unsigned char* buffer);
+void serialize_uint(unsigned int value, int startIdx, unsigned char* buffer);
+unsigned int deserialize_uint(int startIdx, const unsigned char* buffer);
 void copy_string_to_buffer(const char* string, unsigned char* buffer, int startIDx, int stringSize);
 
-unsigned int deserialize_mini(const char *data);
+
+unsigned int deserialize_mini(const unsigned char *data);
 void deserialize_small(const char *data, unsigned int &value1, unsigned int &value2);
 
 void send_message(const HSteamNetConnection &destination, SteamNetworkingMessage_t *message);
@@ -72,48 +96,79 @@ public:
 	static void freeNetworkEntityID(EntityNetworkID_t networkEntityID);
 };
 
-//===============GDNet Singleton===============//
+//===============Entity Info===============//
 
-class GDNet : public RefCounted {
-	GDCLASS(GDNet, RefCounted);
-
-private:
-	/**
-	Load network entity scenes into a data structure from the NETWORK_ENTITIES directory.
-	*/
-	bool load_network_entities();
+class EntityInfo : public RefCounted{
+	GDCLASS(EntityInfo, RefCounted);
 
 protected:
-	static Ref<GDNet> s_singleton;
+	static void _bind_methods();
+public:
+	EntityInfo_t m_entityInfo;
+
+	EntityInfo();
+	~EntityInfo();
+
+	bool verify_info();
+	void serialize_info();
+
+	void set_entity_name(String name);
+	void set_entity_id(EntityID_t id);
+	void set_associated_player_id(PlayerID_t associatedPlayer);
+	String get_entity_name();
+	EntityID_t get_entity_id();
+	PlayerID_t get_associated_player_id();
+};
+
+//===============GDNet Singleton===============//
+
+class GDNet : public Object {
+	GDCLASS(GDNet, Object);
+
+private:
+	static ZoneID_t m_zoneIDCounter;
+
+	bool register_network_entities();
+	World* get_world_singleton();
+
+protected:
 	static void _bind_methods();
 
 public:
+	static GDNet* singleton;
+	std::map<EntityID_t, NetworkEntityInfo> m_networkEntityRegistry;
+	std::map<ZoneID_t, ZoneInfo> m_zoneRegistry;
+	World* world;
 	bool m_isInitialized;
 	bool m_isClient;
 	bool m_isServer;
-	Player *m_player;
-	std::map<EntityID_t, Ref<PackedScene>> m_entitiesById;
-	std::map<String, EntityID_t> m_entityIdByName;
+
 
 	GDNet();
 	~GDNet();
+	void cleanup();
 
-	static Ref<GDNet> get_singleton();
+	void register_zone(Zone *zone);
+	void unregister_zone(Zone *zone);
 
 	void init_gdnet();
 	void shutdown_gdnet();
 
 	bool is_client();
 	bool is_server();
+
+	bool zone_exists(ZoneID_t zoneId);
+	bool entity_exists(EntityID_t entityId);
+	EntityID_t get_entity_id_by_name(String entityName);
 };
 
 //===============Sync Transform===============//
-class SyncTransform : public Node {
-	GDCLASS(SyncTransform, Node);
-
-protected:
-	static void _bind_methods();
-};
+//class SyncTransform : public Node {
+//	GDCLASS(SyncTransform, Node);
+//
+//protected:
+//	static void _bind_methods();
+//};
 
 //===============Network Entity===============//
 
@@ -122,44 +177,10 @@ class NetworkEntity : public Node {
 
 private:
 protected:
-	static void _bind_methods();
+	//static void _bind_methods();
 	void _notification(int n_type);
 
 public:
-};
-
-//===============Player===============//
-
-class Player : public Object {
-	GDCLASS(Player, Object);
-
-private:
-	static Player *s_pCallbackInstance;
-	HSteamNetConnection m_hConnection;
-	std::thread m_runLoopThread;
-	bool m_runLoop;
-
-	static void steam_net_conn_status_changed_wrapper(SteamNetConnectionStatusChangedCallback_t *pInfo);
-
-	void run_loop();
-	void on_net_connection_status_changed(SteamNetConnectionStatusChangedCallback_t *pInfo);
-	void poll_incoming_messages();
-
-protected:
-	static void _bind_methods();
-
-public:
-	bool m_isConnectedToWorld;
-
-	Player();
-	~Player();
-
-	World *m_world;
-
-	void connect_to_world(String host, int port);
-	void disconnect_from_world();
-
-	HSteamNetConnection get_world_connection();
 };
 
 //===============Zone===============//
@@ -168,82 +189,93 @@ class Zone : public Node {
 	GDCLASS(Zone, Node);
 
 private:
-	static ZoneID_t m_zone_id_counter;
-
-	World *m_parentWorld;
-	Node *m_zoneInstance;
+	Node *m_zoneInstance = nullptr;
 	Ref<PackedScene> m_zoneScene;
-	ZoneID_t m_zoneId;
 
 protected:
 	static void _bind_methods();
 	void _notification(int n_type);
 
 public:
+	ZoneID_t m_zoneId = 0U;
+	bool m_instantiated = false;
+	std::vector<PlayerID_t> m_playersInZone;
+
 	Zone();
 	~Zone();
-
-	bool m_instantiated;
-	std::vector<PlayerID_t> m_playersInZone;
 
 	Ref<PackedScene> get_zone_scene() const;
 	void set_zone_scene(const Ref<PackedScene> &zoneScene);
 	ZoneID_t get_zone_id() const;
 	void instantiate_zone();
+	void uninstantiate_zone();
 
-	void add_player(PlayerID_t playerID);
+	void add_player(PlayerID_t playerId);
+	bool player_in_zone(PlayerID_t playerId);
 	void instantiate_network_entity(EntityID_t entityId, String parentNode);
-	void create_network_entity(String entityName, String parentNode);
+	void create_entity(Ref<EntityInfo> entityInfo);
 };
 
 //===============World===============//
 
-class World : public Node {
-	GDCLASS(World, Node);
+class World : public Object {
+	GDCLASS(World, Object);
 
 private:
-	//Relavent when acting as server
-	static World *s_pCallbackInstace;
-	std::thread m_runLoopThread;
+	std::map<HSteamNetConnection, PlayerInfo> m_worldPlayerInfoByConnection;
+	std::map<PlayerID_t, PlayerInfo> m_worldPlayerInfoById;
+
+	//Server Side
+	bool m_serverRunLoop;
 	HSteamNetPollGroup m_hPollGroup;
 	HSteamListenSocket m_hListenSock;
-	std::map<HSteamNetConnection, PlayerConnectionInfo> m_worldPlayerInfoByConnection;
-	std::map<PlayerID_t, PlayerConnectionInfo> m_worldPlayerInfoById;
-	std::map<ZoneID_t, Zone *> m_registeredZones;
-	bool m_runLoop;
+	std::thread m_serverListenThread;
 
-	static void steam_net_conn_status_changed_wrapper(SteamNetConnectionStatusChangedCallback_t *pInfo);
-
+	static void SERVER_SIDE_CONN_CHANGE(SteamNetConnectionStatusChangedCallback_t *pInfo);
 	void player_connecting(HSteamNetConnection playerConnection);
 	void player_connected(HSteamNetConnection playerConnection);
 	void player_disconnected(HSteamNetConnection playerConnection);
-
-	void run_loop();
-	void on_net_connection_status_changed(SteamNetConnectionStatusChangedCallback_t *pInfo);
-	void poll_incoming_messages();
-
 	void remove_player(HSteamNetConnection hConn);
+	void SERVER_SIDE_connection_status_changed(SteamNetConnectionStatusChangedCallback_t *pInfo);
+	void SERVER_SIDE_poll_incoming_messages();
+	void server_listen_loop();
+
+	//Client Side
+	bool m_clientRunLoop;
+	std::thread m_clientListenThread;
+
+	static void CLIENT_SIDE_CONN_CHANGE(SteamNetConnectionStatusChangedCallback_t *pInfo);
+	void CLIENT_SIDE_connection_status_changed(SteamNetConnectionStatusChangedCallback_t *pInfo);
+	void CLIENT_SIDE_poll_incoming_messages();
+	void client_listen_loop();
 
 protected:
 	static void _bind_methods();
-	void _notification(int n_type);
 
 public:
 	World();
 	~World();
+	void cleanup();
 
-	void register_zone(Zone *zone);
-	void unregister_zone(Zone *zone);
 	bool instantiate_zone_by_id(ZoneID_t zoneId);
 
+	//Server side
 	void start_world(int port);
 	void stop_world();
+
+	//Client side
+	HSteamNetConnection m_worldConnection;
 
 	void join_world(String world, int port);
 	void leave_world();
 
-	bool load_zone(String zoneName);
-	void unload_zone();
+	bool load_zone_by_name(String zoneName);
+	bool load_zone_by_id(ZoneID_t zoneId);
+	// void unload_zone();
+
+	//Both
+	bool player_exists(PlayerID_t playerId);
+
 };
 
 #endif

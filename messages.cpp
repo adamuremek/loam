@@ -2,21 +2,42 @@
 #include "include/steam/isteamnetworkingutils.h"
 #include "include/steam/steamnetworkingsockets.h"
 
-void serialize_uint(unsigned int value, int startIdx, unsigned char* buffer){
-	for(int i = startIdx; i < startIdx + 4; i++){
+void serialize_int(int value, int startIdx, unsigned char* buffer){
+	for (int i = startIdx; i < startIdx + sizeof(int); i++) {
 		buffer[i] = static_cast<unsigned char>(value & 0xFF);
 		value >>= 8;
 	}
 }
 
-void copy_string_to_buffer(const char* string, unsigned char * buffer, int startIDx, int stringSize){
-	for(int i = 0; i < stringSize; i++){
+void serialize_uint(unsigned int value, int startIdx, unsigned char *buffer) {
+	for (int i = startIdx; i < startIdx + sizeof(unsigned int); i++) {
+		buffer[i] = static_cast<unsigned char>(value & 0xFF);
+		value >>= 8;
+	}
+}
+
+unsigned int deserialize_uint(int startIdx, const unsigned char* buffer){
+	unsigned int res = 0U;
+	int shiftAmt = 0;
+
+	for(int i = startIdx; i < startIdx + sizeof(unsigned int); i++){
+		res |= buffer[i] << (8 * shiftAmt);
+		shiftAmt++;
+	}
+
+	return res;
+}
+
+
+
+void copy_string_to_buffer(const char *string, unsigned char *buffer, int startIDx, int stringSize) {
+	for (int i = 0; i < stringSize; i++) {
 		buffer[startIDx] = string[i];
 		startIDx++;
 	}
 }
 
-SteamNetworkingMessage_t *allocate_message(const unsigned char* data, const int sizeOfData, const HSteamNetConnection &destination){
+SteamNetworkingMessage_t *allocate_message(const unsigned char *data, const int sizeOfData, const HSteamNetConnection &destination) {
 	// Allocate a new message
 	SteamNetworkingMessage_t *pMessage = SteamNetworkingUtils()->AllocateMessage(sizeOfData);
 
@@ -68,30 +89,10 @@ SteamNetworkingMessage_t *create_small_message(MessageType_t messageType, unsign
 	return allocate_message(data, sizeOfData, destination);
 }
 
-SteamNetworkingMessage_t *instantiate_entity_message(const EntityID_t entityID, String parentNode, const HSteamNetConnection &destination){
-	// Create the message data
-	const int sizeOfData = 1 + sizeof(EntityID_t) + parentNode.length();
-	unsigned char data[sizeOfData];
 
-	//Assign message type in the buffer
-	data[0] = INSTANTIATE_NETWORK_ENTITY;
 
-	// Populate message data
-	serialize_uint(entityID, 1, data);
-	copy_string_to_buffer(parentNode.utf8().get_data(), data, 5, parentNode.length());
-
-	//Return the message
-	allocate_message(data, sizeOfData, destination);
-}
-
-unsigned int deserialize_mini(const char *data) {
-	unsigned int result = 0;
-
-	for (int i = 1; i <= sizeof(unsigned int); i++) {
-		result |= (static_cast<unsigned int>(static_cast<unsigned char>(data[i]) << (8 * i)));
-	}
-
-	return result;
+unsigned int deserialize_mini(const unsigned char *data) {
+	return deserialize_uint(1, data);
 }
 
 void deserialize_small(const char *data, unsigned int &value1, unsigned int &value2) {

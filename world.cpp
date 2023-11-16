@@ -9,27 +9,26 @@
 
 //===============World Implementation===============//
 
-World *World::s_pCallbackInstace = nullptr;
-
 World::World() {
-	s_pCallbackInstace = this;
 	m_hListenSock = k_HSteamListenSocket_Invalid;
 	m_hPollGroup = k_HSteamNetPollGroup_Invalid;
-	m_runLoop = false;
-	GDNet::get_singleton()->m_player->m_world = this;
+	m_worldConnection = k_HSteamNetConnection_Invalid;
+	m_serverRunLoop = false;
+	m_clientRunLoop = false;
 }
 
-World::~World() {
-	s_pCallbackInstace = nullptr;
-	//When called here, this mehtod does not allow the editor to start for some reason.
-	//stop_world();
+World::~World() {}
+
+void World::cleanup(){
+	//Cleanup the client if there exists a client connetion
+	if(GDNet::singleton->m_isClient || m_worldConnection != k_HSteamNetConnection_Invalid){
+		leave_world();
+	}
 }
 
-//==Private Methods==//
-
-//=======================================GAMENETWORKINGSOCKETS STUFF=======================================//
-void World::steam_net_conn_status_changed_wrapper(SteamNetConnectionStatusChangedCallback_t *pInfo) {
-	s_pCallbackInstace->on_net_connection_status_changed(pInfo);
+//=======================================GAMENETWORKINGSOCKETS STUFF - SERVER SIDE=======================================//
+void World::SERVER_SIDE_CONN_CHANGE(SteamNetConnectionStatusChangedCallback_t *pInfo) {
+	GDNet::singleton->world->SERVER_SIDE_connection_status_changed(pInfo);
 }
 
 void World::player_connecting(HSteamNetConnection playerConnection) {
@@ -66,7 +65,7 @@ void World::player_connected(HSteamNetConnection playerConnection) {
 	}
 
 	//Populate player info
-	PlayerConnectionInfo player;
+	PlayerInfo player{};
 	player.m_hConn = playerConnection;
 	player.id = IDGenerator::generatePlayerID();
 
@@ -86,7 +85,25 @@ void World::player_disconnected(HSteamNetConnection playerConnection) {
 	remove_player(playerConnection);
 }
 
-void World::on_net_connection_status_changed(SteamNetConnectionStatusChangedCallback_t *pInfo) {
+void World::remove_player(HSteamNetConnection hConn) {
+	//Remove the player info from the connection keyed map and the id keyed map if they exist
+	std::map<HSteamNetConnection, PlayerInfo>::iterator iter = m_worldPlayerInfoByConnection.find(hConn);
+	if (iter != m_worldPlayerInfoByConnection.end()) {
+		//Assign found value to a variable
+		PlayerInfo info = iter->second;
+		m_worldPlayerInfoById.erase(info.id);
+		m_worldPlayerInfoByConnection.erase(hConn);
+	}
+
+	//Close connection witht the player
+	if (!SteamNetworkingSockets()->CloseConnection(hConn, 0, nullptr, false)) {
+		print_line("Cannot close connection, it was already closed.");
+	}
+
+	print_line("Connection with a player has been closed.");
+}
+
+void World::SERVER_SIDE_connection_status_changed(SteamNetConnectionStatusChangedCallback_t *pInfo) {
 	//What is the state of the connection?
 	switch (pInfo->m_info.m_eState) {
 		case k_ESteamNetworkingConnectionState_None:
@@ -118,34 +135,25 @@ void World::on_net_connection_status_changed(SteamNetConnectionStatusChangedCall
 	}
 }
 
-//=========================================================================================================//
-
-void World::run_loop() {
-	while (m_runLoop) {
-		poll_incoming_messages();
-		SteamNetworkingSockets()->RunCallbacks();
-		std::this_thread::sleep_for(std::chrono::milliseconds(10));
-	}
-}
-
-void World::poll_incoming_messages() {
-	while (m_runLoop) {
+void World::SERVER_SIDE_poll_incoming_messages() {
+	while (m_serverRunLoop) {
 		SteamNetworkingMessage_t *pIncomingMsgs[16];
 		int numMsgs = SteamNetworkingSockets()->ReceiveMessagesOnPollGroup(m_hPollGroup, pIncomingMsgs, 16);
 
-		if (numMsgs == 0)
+		if (numMsgs == 0) {
 			break;
+		}
 
 		if (numMsgs < 0) {
-			ERR_FAIL_MSG("Error checking messages");
-			m_runLoop = false;
+			ERR_PRINT("Error checking messages");
+			m_serverRunLoop = false;
 			return;
 		}
 
 		//Evaluate each message
 		for (int i = 0; i < numMsgs; i++) {
 			SteamNetworkingMessage_t *pMessage = pIncomingMsgs[i];
-			const char *mssgData = static_cast<char *>(pMessage->m_pData);
+			const unsigned char *mssgData = static_cast<unsigned char *>(pMessage->m_pData);
 
 			//Check the type of message recieved
 			switch (mssgData[0]) {
@@ -153,12 +161,14 @@ void World::poll_incoming_messages() {
 					print_line("Load Zone Request recieved!");
 					// Get the player id and the zone requested by the player
 					PlayerID_t playerId = m_worldPlayerInfoByConnection[pMessage->m_conn].id;
-					ZoneID_t zoneId = deserialize_mini(mssgData);
-					Zone *zone = m_registeredZones[zoneId];
 
-					// Instnatiate the zone if it isnt already or if there are no players in the zone.
-					if (!zone->m_instantiated || m_registeredZones.size() == 0) {
-						zone->call_deferred("instantiate_zone");
+					ZoneID_t zoneId = deserialize_mini(mssgData);
+
+					Zone *zone = GDNet::singleton->m_zoneRegistry[zoneId].zone;
+
+					// Instantiate the zone if it hasn't been instantiated yet
+					if (!zone->m_instantiated) {
+						zone->instantiate_zone();
 					}
 
 					// Inform all players in the zone that a new player has loaded into the zone
@@ -168,11 +178,13 @@ void World::poll_incoming_messages() {
 						send_message(destination, pPlayerEnteredZoneMssg);
 					}
 
-					// Add requesting player to the zone locally
+					// Add requesting player to the zone (server side)
 					zone->add_player(playerId);
 
 					SteamNetworkingMessage_t *pOutgoingMssg = create_mini_message(LOAD_ZONE_ACCEPT, zoneId, pMessage->m_conn);
+
 					send_message(pMessage->m_conn, pOutgoingMssg);
+
 					break;
 				}
 				default:
@@ -185,23 +197,133 @@ void World::poll_incoming_messages() {
 	}
 }
 
-void World::remove_player(HSteamNetConnection hConn) {
-	//Remove the player info from the connection keyed map and the id keyed map if they exist
-	std::map<HSteamNetConnection, PlayerConnectionInfo>::iterator iter = m_worldPlayerInfoByConnection.find(hConn);
-	if (iter != m_worldPlayerInfoByConnection.end()) {
-		//Assign found value to a variable
-		PlayerConnectionInfo info = iter->second;
-		m_worldPlayerInfoById.erase(info.id);
-		m_worldPlayerInfoByConnection.erase(hConn);
+void World::server_listen_loop() {
+	while (m_serverRunLoop) {
+		SERVER_SIDE_poll_incoming_messages();
+		SteamNetworkingSockets()->RunCallbacks();
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
-
-	//Close connection witht the player
-	if (!SteamNetworkingSockets()->CloseConnection(hConn, 0, nullptr, false)) {
-		print_line("Cannot close connection, it was already closed.");
-	}
-
-	print_line("Connection with a player has been closed.");
 }
+//=======================================================================================================================//
+
+//=======================================GAMENETWORKINGSOCKETS STUFF - CLIENT SIDE=======================================//
+void World::CLIENT_SIDE_CONN_CHANGE(SteamNetConnectionStatusChangedCallback_t *pInfo) {
+	GDNet::singleton->world->CLIENT_SIDE_connection_status_changed(pInfo);
+}
+
+void World::CLIENT_SIDE_connection_status_changed(SteamNetConnectionStatusChangedCallback_t *pInfo) {
+	//What's the state of the connection?
+	switch (pInfo->m_info.m_eState) {
+		case k_ESteamNetworkingConnectionState_None:
+			// NOTE: We will get callbacks here when we destroy connections.  You can ignore these.
+			break;
+
+		case k_ESteamNetworkingConnectionState_ClosedByPeer:
+			break;
+		case k_ESteamNetworkingConnectionState_ProblemDetectedLocally: {
+			m_clientRunLoop = false;
+
+			// Print an appropriate message
+			if (pInfo->m_eOldState == k_ESteamNetworkingConnectionState_Connecting) {
+				// Note: we could distinguish between a timeout, a rejected connection,
+				// or some other transport problem.
+				print_line("We sought the remote host, yet our efforts were met with defeat. ", pInfo->m_info.m_szEndDebug);
+			} else if (pInfo->m_info.m_eState == k_ESteamNetworkingConnectionState_ProblemDetectedLocally) {
+				print_line("Alas, troubles beset us; we have lost contact with the host. ", pInfo->m_info.m_szEndDebug);
+			} else {
+				// NOTE: We could check the reason code for a normal disconnection
+				print_line("The host hath bidden us farewell.  (%s)", pInfo->m_info.m_szEndDebug);
+			}
+
+			// Clean up the connection.  This is important!
+			// The connection is "closed" in the network sense, but
+			// it has not been destroyed.  We must close it on our end, too
+			// to finish up.  The reason information do not matter in this case,
+			// and we cannot linger because it's already closed on the other end,
+			// so we just pass 0's.
+			SteamNetworkingSockets()->CloseConnection(pInfo->m_hConn, 0, nullptr, false);
+			m_worldConnection = k_HSteamNetConnection_Invalid;
+			break;
+		}
+
+		case k_ESteamNetworkingConnectionState_Connecting:
+			// We will get this callback when we start connecting.
+			print_line("Connecting to world...");
+			break;
+
+		case k_ESteamNetworkingConnectionState_Connected:
+			print_line("Successfully connected to world!");
+			break;
+
+		default:
+			// Silences -Wswitch
+			break;
+	}
+}
+
+void World::CLIENT_SIDE_poll_incoming_messages() {
+	while (m_clientRunLoop) {
+		SteamNetworkingMessage_t *pIncomingMsgs[1];
+		int numMsgs = SteamNetworkingSockets()->ReceiveMessagesOnConnection(m_worldConnection, pIncomingMsgs, 1);
+
+		if (numMsgs == 0) {
+			return;
+		}
+
+		if (numMsgs < 0) {
+			ERR_FAIL_MSG("Error checking messages");
+			m_clientRunLoop = false;
+			return;
+		}
+
+		//Evaluate each message
+		for (int i = 0; i < numMsgs; i++) {
+			SteamNetworkingMessage_t *pMessage = pIncomingMsgs[i];
+			const unsigned char *mssgData = static_cast<unsigned char *>(pMessage->m_pData);
+
+			//Check the type of message recieved
+			switch (mssgData[0]) {
+				case ASSIGN_PLAYER_ID: {
+					PlayerID_t id = deserialize_mini(mssgData);
+					print_line(vformat("Assigned player id is %d", id));
+
+					//Since this entire loop is running in a different thread from the main thread/game loop,
+					//the signal has to be queued to be emitted at the next game loop call.
+					call_deferred("emit_signal", "joined_world");
+					break;
+				}
+				case LOAD_ZONE_ACCEPT: {
+					ZoneID_t zoneId = deserialize_mini(mssgData);
+					print_line(vformat("Loading zone with id %d", zoneId));
+
+					instantiate_zone_by_id(zoneId);
+
+					break;
+				}
+				case PLAYER_ENTERED_ZONE: {
+					PlayerID_t playerId = deserialize_mini(mssgData);
+
+					break;
+				}
+				default:
+					break;
+			}
+
+			//Dispose of the message
+			pMessage->Release();
+		}
+	}
+}
+
+void World::client_listen_loop() {
+	while (m_clientRunLoop) {
+		CLIENT_SIDE_poll_incoming_messages();
+		SteamNetworkingSockets()->RunCallbacks();
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+}
+
+//=======================================================================================================================//
 
 //==Protected Mehtods==//
 
@@ -210,41 +332,19 @@ void World::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("stop_world"), &World::stop_world);
 	ClassDB::bind_method(D_METHOD("join_world", "world", "port"), &World::join_world);
 	ClassDB::bind_method(D_METHOD("leave_world"), &World::leave_world);
-	ClassDB::bind_method(D_METHOD("load_zone", "zone_name"), &World::load_zone);
+	ClassDB::bind_method(D_METHOD("load_zone_by_name", "zone_name"), &World::load_zone_by_name);
+	ClassDB::bind_method(D_METHOD("load_zone_by_id", "zone_id"), &World::load_zone_by_id);
 
 	ADD_SIGNAL(MethodInfo("joined_world"));
 }
 
-void World::_notification(int n_type) {
-	switch (n_type) {
-		case NOTIFICATION_EXIT_TREE: {
-			//If the application closes, the world node will be cleaned up.
-			//When the world node is cleaned up, properly disconnect the player from the world
-			//to ensure a smooth cleanup.
-			if (GDNet::get_singleton()->m_player->m_isConnectedToWorld) {
-				GDNet::get_singleton()->m_player->disconnect_from_world();
-			}
-
-			break;
-		}
-	}
-}
-
 //==Public Methods==//
 
-void World::register_zone(Zone *zone) {
-	m_registeredZones.insert({ zone->get_zone_id(), zone });
-}
-
-void World::unregister_zone(Zone *zone) {
-	m_registeredZones.erase(zone->get_zone_id());
-}
-
 bool World::instantiate_zone_by_id(ZoneID_t zoneId) {
-	std::map<ZoneID_t, Zone *>::iterator iter = m_registeredZones.find(zoneId);
+	std::map<ZoneID_t, ZoneInfo>::iterator it = GDNet::singleton->m_zoneRegistry.find(zoneId);
 
-	if (iter != m_registeredZones.end()) {
-		iter->second->instantiate_zone();
+	if (it != GDNet::singleton->m_zoneRegistry.end()) {
+		it->second.zone->instantiate_zone();
 		return true;
 	} else {
 		return false;
@@ -252,13 +352,13 @@ bool World::instantiate_zone_by_id(ZoneID_t zoneId) {
 }
 
 void World::start_world(int port) {
-	if (!GDNet::get_singleton()->m_isInitialized) {
-		ERR_FAIL_MSG("GDNet is not initialized!");
+	if (!GDNet::singleton->m_isInitialized) {
+		ERR_PRINT("GDNet is not initialized!");
 		return;
 	}
 
 	//Define network connection info
-	SteamNetworkingIPAddr worldInfo;
+	SteamNetworkingIPAddr worldInfo{};
 	worldInfo.Clear();
 	worldInfo.m_port = (uint16)port;
 
@@ -266,8 +366,8 @@ void World::start_world(int port) {
 	m_hPollGroup = SteamNetworkingSockets()->CreatePollGroup();
 
 	//Server Config (set callbacks)
-	SteamNetworkingConfigValue_t cfg;
-	cfg.SetPtr(k_ESteamNetworkingConfig_Callback_ConnectionStatusChanged, (void *)World::steam_net_conn_status_changed_wrapper);
+	SteamNetworkingConfigValue_t cfg{};
+	cfg.SetPtr(k_ESteamNetworkingConfig_Callback_ConnectionStatusChanged, (void *)World::SERVER_SIDE_CONN_CHANGE);
 
 	//Create a listening socket with the server config
 	m_hListenSock = SteamNetworkingSockets()->CreateListenSocketIP(worldInfo, 1, &cfg);
@@ -285,21 +385,21 @@ void World::start_world(int port) {
 	}
 
 	//Start the main server loop
-	m_runLoop = true;
-	m_runLoopThread = std::thread(&World::run_loop, this);
+	m_serverRunLoop = true;
+	m_serverListenThread = std::thread(&World::server_listen_loop, this);
 
 	//Indicate that the world is acting as a server, not a client
-	GDNet::get_singleton()->m_isServer = true;
+	GDNet::singleton->m_isServer = true;
 
 	//TEMP: confirm that the server has started on the requested port:
 	print_line(vformat("Server has started on port %d!", port));
 }
 
 void World::stop_world() {
-	m_runLoop = false;
+	m_serverRunLoop = false;
 
-	if (m_runLoopThread.joinable()) {
-		m_runLoopThread.join();
+	if (m_serverListenThread.joinable()) {
+		m_serverListenThread.join();
 	}
 
 	//Close the socket
@@ -311,38 +411,102 @@ void World::stop_world() {
 	m_hPollGroup = k_HSteamNetPollGroup_Invalid;
 
 	//Indicate that the world is no longer acting as the server
-	GDNet::get_singleton()->m_isServer = false;
+	GDNet::singleton->m_isServer = false;
 }
 
 void World::join_world(String world, int port) {
-	if (!GDNet::get_singleton()->m_player->m_isConnectedToWorld) {
-		GDNet::get_singleton()->m_player->connect_to_world(world, port);
+	//Define network connection info
+	SteamNetworkingIPAddr worldInfo{};
+	worldInfo.Clear();
+	worldInfo.ParseString(world.utf8().get_data());
+	worldInfo.m_port = port;
+
+	//Client config (set callbacks)
+	SteamNetworkingConfigValue_t cfg{};
+	cfg.SetPtr(k_ESteamNetworkingConfig_Callback_ConnectionStatusChanged, (void *)World::CLIENT_SIDE_CONN_CHANGE);
+
+	//Connect to world
+	m_worldConnection = SteamNetworkingSockets()->ConnectByIPAddress(worldInfo, 1, &cfg);
+
+	//Make sure the player was able to connect to the world
+	if (m_worldConnection == k_HSteamNetConnection_Invalid) {
+		ERR_PRINT("Unable to conncect to world.");
+		return;
 	}
+
+	//Start the client listen loop
+	m_clientRunLoop = true;
+	m_clientListenThread = std::thread(&World::client_listen_loop, this);
+
+	GDNet::singleton->m_isClient = true;
+	print_line("Connection to world has initiated.");
 }
 
 void World::leave_world() {
-	if (GDNet::get_singleton()->m_player->m_isConnectedToWorld) {
-		GDNet::get_singleton()->m_player->disconnect_from_world();
+	//Make sure client is connected to a world
+	if (!GDNet::singleton->m_isClient || m_worldConnection == k_HSteamNetConnection_Invalid){
+		ERR_PRINT("Not connected to a world, therefore cannot leave world!");
+		return;
 	}
+
+	m_clientRunLoop = false;
+
+	//Stop the run loop
+	if (m_clientListenThread.joinable()){
+		m_clientListenThread.join();
+	}
+
+	//Stop world connection
+	SteamNetworkingSockets()->CloseConnection(m_worldConnection, 0, nullptr, false);
+	m_worldConnection = k_HSteamNetConnection_Invalid;
+
+	GDNet::singleton->m_isClient = false;
 }
 
-bool World::load_zone(String zoneName) {
-	if (GDNet::get_singleton()->m_isServer) {
+bool World::load_zone_by_name(String zoneName) {
+	if (GDNet::singleton->m_isServer) {
 		print_line("Cannot request to load zone as the world host!");
 		return false;
 	}
 
 	print_line("Finding Zone...");
-
-	for (std::map<ZoneID_t, Zone *>::const_iterator pair = m_registeredZones.begin(); pair != m_registeredZones.end(); ++pair) {
-		if (pair->second->get_name() == zoneName) {
+	std::map<ZoneID_t, ZoneInfo>::iterator it;
+	for (it = GDNet::singleton->m_zoneRegistry.begin(); it != GDNet::singleton->m_zoneRegistry.end(); ++it) {
+		if (it->second.name == zoneName) {
 			print_line("Zone Found! sending load zone request.");
-			ZoneID_t zoneId = pair->second->get_zone_id();
-			SteamNetworkingMessage_t *pLoadZoneRequest = create_mini_message(LOAD_ZONE_REQUEST, zoneId, GDNet::get_singleton()->m_player->get_world_connection());
-			send_message(GDNet::get_singleton()->m_player->get_world_connection(), pLoadZoneRequest);
+			ZoneID_t zoneId = it->second.id;
+			SteamNetworkingMessage_t *pLoadZoneRequest = create_mini_message(LOAD_ZONE_REQUEST, zoneId, m_worldConnection);
+			send_message(m_worldConnection, pLoadZoneRequest);
 			return true;
 		}
 	}
 
 	return false;
+}
+
+bool World::load_zone_by_id(ZoneID_t zoneId) {
+	if (GDNet::singleton->m_isServer) {
+		print_line("Cannot request to load zone as the world host!");
+		return false;
+	}
+
+	std::map<ZoneID_t, ZoneInfo>::iterator it = GDNet::singleton->m_zoneRegistry.find(zoneId);
+
+	if (it != GDNet::singleton->m_zoneRegistry.end()) {
+		print_line("Zone Found! sending load zone request.");
+		SteamNetworkingMessage_t *pLoadZoneRequest = create_mini_message(LOAD_ZONE_REQUEST, zoneId, m_worldConnection);
+		send_message(m_worldConnection, pLoadZoneRequest);
+		return true;
+	}else{
+		return false;
+	}
+}
+
+bool World::player_exists(PlayerID_t playerId) {
+	if(!GDNet::singleton->m_isClient && !GDNet::singleton->m_isServer){
+		ERR_PRINT("Cannot lookup players since there is no world running and there is no connection to a world.");
+		return false;
+	}
+
+	return m_worldPlayerInfoById.find(playerId) != m_worldPlayerInfoById.end();
 }
