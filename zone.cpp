@@ -121,7 +121,7 @@ void Zone::create_entity(Ref<EntityInfo> entityInfo) {
 
 		//Create and send the message
 		SteamNetworkingMessage_t* mssg = allocate_message(data, dataLen, GDNet::singleton->world->m_worldConnection);
-		send_message(GDNet::singleton->world->m_worldConnection, mssg);
+		send_message(mssg);
 	}
 
 

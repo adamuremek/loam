@@ -16,6 +16,18 @@ void serialize_uint(unsigned int value, int startIdx, unsigned char *buffer) {
 	}
 }
 
+int deserialize_int(int startIdx, const unsigned char* buffer){
+	int res = 0;
+	int shiftAmt = 0;
+
+	for(int i = startIdx; i < startIdx + sizeof(unsigned int); i++){
+		res |= buffer[i] << (8 * shiftAmt);
+		shiftAmt++;
+	}
+
+	return res;
+}
+
 unsigned int deserialize_uint(int startIdx, const unsigned char* buffer){
 	unsigned int res = 0U;
 	int shiftAmt = 0;
@@ -28,7 +40,15 @@ unsigned int deserialize_uint(int startIdx, const unsigned char* buffer){
 	return res;
 }
 
+String deserialize_string(int startIdx, int stringLength, const unsigned char* buffer){
+	unsigned char strData[stringLength];
 
+	for(int i = 0; i < stringLength; i++){
+		strData[i] = buffer[startIdx + i];
+	}
+
+	return String::utf8((const char*)strData);
+}
 
 void copy_string_to_buffer(const char *string, unsigned char *buffer, int startIDx, int stringSize) {
 	for (int i = 0; i < stringSize; i++) {
@@ -111,9 +131,9 @@ void deserialize_small(const char *data, unsigned int &value1, unsigned int &val
 	value2 = result2;
 }
 
-void send_message(const HSteamNetConnection &destination, SteamNetworkingMessage_t *message) {
+void send_message(SteamNetworkingMessage_t *message) {
 	//Send the message
-	SteamNetworkingSockets()->SendMessageToConnection(destination, message->m_pData, message->m_cbSize, k_nSteamNetworkingSend_Reliable, nullptr);
+	SteamNetworkingSockets()->SendMessageToConnection(message->m_conn, message->m_pData, message->m_cbSize, k_nSteamNetworkingSend_Reliable, nullptr);
 	//Free memory from the message
 	message->Release();
 }

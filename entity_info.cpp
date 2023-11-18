@@ -14,6 +14,7 @@ void EntityInfo::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_associated_player_id"), &EntityInfo::get_associated_player_id);
 
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "name"), "set_entity_name", "get_entity_name");
+	ADD_PROPERTY(PropertyInfo(Variant::STRING, "parentRelativePath"), "set_parent_relative_path", "get_parent_relative_path");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "entity_id"), "set_entity_id", "get_entity_id");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "associated_player"), "set_associated_player_id", "get_associated_player_id");
 }
@@ -57,10 +58,14 @@ void EntityInfo::serialize_info() {
 
 	//Size the data buffer
 	int nameLen = m_entityInfo.entityName.length();
-	int bufferSize = 1 + nameLen + sizeof(EntityID_t) + sizeof(PlayerID_t);
+	int pathLen = m_entityInfo.parentRelativePath.length();
+	// request type + name char len + name + path char len + path + parent zone id
+	// + entity id + network id + ass. player id
+	int bufferSize = 1 + (6 * sizeof(uint32_t)) + nameLen + pathLen;
 	m_entityInfo.dataBuffer.resize(bufferSize);
 
 	int bufferIdx = 0;
+	std::size_t numericSize = sizeof(uint32_t);
 
 	//Add an empty request type as a placeholder
 	m_entityInfo.dataBuffer.push_back(0);
@@ -68,25 +73,82 @@ void EntityInfo::serialize_info() {
 
 	//Add the string length of the entity name to the buffer
 	serialize_int(nameLen, bufferIdx, m_entityInfo.dataBuffer.data());
-	bufferIdx += sizeof(int);
+	bufferIdx += numericSize;
 
-	//Add the string to the buffer
+	//Add the name string to the buffer
 	const char* nameData = m_entityInfo.entityName.utf8().get_data();
 	for(int i = 0; i < nameLen; i++){
 		m_entityInfo.dataBuffer.push_back(static_cast<unsigned int>(nameData[i]));
 	}
 	bufferIdx += nameLen;
 
+	//Add the string lenthg of the entity relative path to the buffer
+	serialize_int(pathLen, bufferIdx, m_entityInfo.dataBuffer.data());
+	bufferIdx += numericSize;
+
+	//Add the path string to the buffer
+	const char* pathData = m_entityInfo.parentRelativePath.utf8().get_data();
+	for(int i = 0; i < pathLen; i++){
+		m_entityInfo.dataBuffer.push_back(static_cast<unsigned int>(pathData[i]));
+	}
+	bufferIdx += pathLen;
+
+	//Add the parent zone id to the buffer
+	serialize_uint(m_entityInfo.parentZone, bufferIdx, m_entityInfo.dataBuffer.data());
+	bufferIdx += numericSize;
+
 	//Add the entity id to the buffer
 	serialize_uint(m_entityInfo.entityId, bufferIdx, m_entityInfo.dataBuffer.data());
-	bufferIdx += sizeof(EntityID_t);
+	bufferIdx += numericSize;
+
+	//Add the network id to the buffer
+	serialize_uint(m_entityInfo.networkId, bufferIdx, m_entityInfo.dataBuffer.data());
+	bufferIdx += numericSize;
 
 	//Add the associated player id to the buffer
 	serialize_uint(m_entityInfo.associatedPlayer, bufferIdx, m_entityInfo.dataBuffer.data());
 }
 
+void EntityInfo::deserialize_info(const unsigned char *data) {
+	//Clear the buffer
+	m_entityInfo.dataBuffer.clear();
+	int bufferIdx = 1;
+	std::size_t numericSize = sizeof(uint32_t);
+
+	//Get the entity name
+	int nameLen = deserialize_int(bufferIdx, data);
+	bufferIdx += numericSize;
+	m_entityInfo.entityName = deserialize_string(bufferIdx, nameLen, data);
+	bufferIdx += nameLen;
+
+	//Get the parent relative path
+	int pathLen = deserialize_int(bufferIdx, data);
+	bufferIdx += numericSize;
+	m_entityInfo.parentRelativePath = deserialize_string(bufferIdx, pathLen, data);
+	bufferIdx += pathLen;
+
+	//Get the parent zone id
+	m_entityInfo.parentZone = deserialize_uint(bufferIdx, data);
+	bufferIdx += numericSize;
+
+	//Get the entity id
+	m_entityInfo.entityId = deserialize_uint(bufferIdx, data);
+	bufferIdx += numericSize;
+
+	//Get the entity's network id
+	m_entityInfo.networkId = deserialize_uint(bufferIdx, data);
+	bufferIdx += numericSize;
+
+	//Get the associated player id
+	m_entityInfo.associatedPlayer = deserialize_uint(bufferIdx, data);
+}
+
 void EntityInfo::set_entity_name(String name) {
 	m_entityInfo.entityName = name;
+}
+
+void EntityInfo::set_parent_relative_path(String path) {
+	m_entityInfo.parentRelativePath = path;
 }
 
 void EntityInfo::set_entity_id(EntityID_t id) {
@@ -99,6 +161,10 @@ void EntityInfo::set_associated_player_id(PlayerID_t associatedPlayer) {
 
 String EntityInfo::get_entity_name() {
 	return m_entityInfo.entityName;
+}
+
+String EntityInfo::get_parent_relative_path() {
+	return m_entityInfo.parentRelativePath;
 }
 
 EntityID_t EntityInfo::get_entity_id() {

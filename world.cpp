@@ -71,7 +71,7 @@ void World::player_connected(HSteamNetConnection playerConnection) {
 
 	//Send the player their ID
 	SteamNetworkingMessage_t *idAssignmentMssg = create_mini_message(ASSIGN_PLAYER_ID, player.id, player.m_hConn);
-	send_message(player.m_hConn, idAssignmentMssg);
+	send_message(idAssignmentMssg);
 
 	//Add player to a map keyed by connection, and a map keyed by id
 	m_worldPlayerInfoByConnection.insert({ playerConnection, player });
@@ -101,6 +101,94 @@ void World::remove_player(HSteamNetConnection hConn) {
 	}
 
 	print_line("Connection with a player has been closed.");
+}
+
+
+void World::SERVER_SIDE_load_zone_request(const unsigned char *mssgData, HSteamNetConnection sourceConn) {
+	print_line("Load Zone Request recieved!");
+	// Get the player id and the zone requested by the player
+	PlayerID_t playerId = m_worldPlayerInfoByConnection[sourceConn].id;
+
+	ZoneID_t zoneId = deserialize_mini(mssgData);
+
+	Zone *zone = GDNet::singleton->m_zoneRegistry[zoneId].zone;
+
+	// Instantiate the zone if it hasn't been instantiated yet
+	if (!zone->m_instantiated) {
+		zone->instantiate_zone();
+	}
+
+	// Inform all players in the zone that a new player has loaded into the zone
+	for (const PlayerID_t &id : zone->m_playersInZone) {
+		HSteamNetConnection destination = m_worldPlayerInfoById[id].m_hConn;
+		SteamNetworkingMessage_t *playerEnteredZoneMssg = create_mini_message(PLAYER_ENTERED_ZONE, playerId, destination);
+		send_message(playerEnteredZoneMssg);
+	}
+
+	// Add requesting player to the zone (server side)
+	zone->add_player(playerId);
+
+	SteamNetworkingMessage_t *pOutgoingMssg = create_mini_message(LOAD_ZONE_REQUEST, zoneId, sourceConn);
+
+	send_message(pOutgoingMssg);
+}
+
+void World::SERVER_SIDE_create_entity_request(const unsigned char *mssgData) {
+	print_line("Create entity request recieved!");
+	//Create a new entity info refrence to store on the server side
+	Ref<EntityInfo> entityInfo(memnew(EntityInfo));
+
+	//Deseralize the message data into the reference
+	entityInfo->deserialize_info(mssgData);
+
+	//Assign a network id for the entity
+	entityInfo->m_entityInfo.networkId = IDGenerator::generateNetworkIdentityID();
+
+	//==Instantiate the network entity at the specified path relative to the zone==//
+	//Store local references to relevant objects
+	EntityID_t entityId = entityInfo->get_entity_id();
+	ZoneID_t parentZoneId = entityInfo->m_entityInfo.parentZone;
+	Zone* parentZone = GDNet::singleton->m_zoneRegistry[parentZoneId].zone;
+	String parentRelativePath = entityInfo->get_parent_relative_path();
+
+	//Instantiate the entity
+	Node* instance = GDNet::singleton->m_networkEntityRegistry[entityId].scene->instantiate();
+	entityInfo->m_entityInfo.entityInstance = Object::cast_to<NetworkEntity>(instance);
+
+	//Add the entity to the zone scene
+	Node *parentNode = parentZone->m_zoneInstance->get_node(parentRelativePath);
+	parentNode->add_child(instance);
+
+	//Add the entity to list of known entities in zone
+	parentZone->m_entitiesInZone[entityInfo->m_entityInfo.networkId] = entityInfo;
+
+	//Register entity as an association if it is associated with a player
+	PlayerID_t  associatedPlayer = entityInfo->get_associated_player_id();
+	if(associatedPlayer != 0){
+		m_worldPlayerInfoById[associatedPlayer].associatedEntities[parentZoneId].push_back(entityInfo);
+	}
+
+	//Reserialize the entity info with the new data in it
+	entityInfo->serialize_info();
+
+	//Tell each player in the zone to also create this entity
+	for (const PlayerID_t &id : parentZone->m_playersInZone) {
+		//Get the message bytes
+		unsigned char* outData = entityInfo->m_entityInfo.dataBuffer.data();
+		//Set the request type
+		outData[0] = CREATE_ENTITY_REQUEST;
+		//Get the size and destination of the message
+		int outDataSize = entityInfo->m_entityInfo.dataBuffer.size();
+		HSteamNetConnection destination = m_worldPlayerInfoById[id].m_hConn;
+
+		//Send message to the player
+		SteamNetworkingMessage_t* entityCreationMssg = allocate_message(outData, outDataSize, destination);
+		send_message(entityCreationMssg);
+	}
+}
+
+void World::SERVER_SIDE_create_entity_acknowledge(const unsigned char *mssgData) {
+	
 }
 
 void World::SERVER_SIDE_connection_status_changed(SteamNetConnectionStatusChangedCallback_t *pInfo) {
@@ -157,36 +245,15 @@ void World::SERVER_SIDE_poll_incoming_messages() {
 
 			//Check the type of message recieved
 			switch (mssgData[0]) {
-				case LOAD_ZONE_REQUEST: {
-					print_line("Load Zone Request recieved!");
-					// Get the player id and the zone requested by the player
-					PlayerID_t playerId = m_worldPlayerInfoByConnection[pMessage->m_conn].id;
-
-					ZoneID_t zoneId = deserialize_mini(mssgData);
-
-					Zone *zone = GDNet::singleton->m_zoneRegistry[zoneId].zone;
-
-					// Instantiate the zone if it hasn't been instantiated yet
-					if (!zone->m_instantiated) {
-						zone->instantiate_zone();
-					}
-
-					// Inform all players in the zone that a new player has loaded into the zone
-					for (const PlayerID_t &id : zone->m_playersInZone) {
-						HSteamNetConnection destination = m_worldPlayerInfoById[id].m_hConn;
-						SteamNetworkingMessage_t *pPlayerEnteredZoneMssg = create_mini_message(PLAYER_ENTERED_ZONE, playerId, destination);
-						send_message(destination, pPlayerEnteredZoneMssg);
-					}
-
-					// Add requesting player to the zone (server side)
-					zone->add_player(playerId);
-
-					SteamNetworkingMessage_t *pOutgoingMssg = create_mini_message(LOAD_ZONE_ACCEPT, zoneId, pMessage->m_conn);
-
-					send_message(pMessage->m_conn, pOutgoingMssg);
-
+				case LOAD_ZONE_REQUEST:
+					SERVER_SIDE_load_zone_request(mssgData, pMessage->m_conn);
 					break;
-				}
+				case CREATE_ENTITY_REQUEST:
+					SERVER_SIDE_create_entity_request(mssgData);
+					break;
+				case CREATE_ENTITY_ACKNOWLEDGE:
+					SERVER_SIDE_create_entity_acknowledge(mssgData);
+					break;
 				default:
 					break;
 			}
@@ -210,6 +277,62 @@ void World::server_listen_loop() {
 void World::CLIENT_SIDE_CONN_CHANGE(SteamNetConnectionStatusChangedCallback_t *pInfo) {
 	GDNet::singleton->world->CLIENT_SIDE_connection_status_changed(pInfo);
 }
+
+
+void World::CLIENT_SIDE_player_entered_zone(const unsigned char *mssgData) {
+	PlayerID_t playerId = deserialize_mini(mssgData);
+}
+
+void World::CLIENT_SIDE_process_create_entity_request(const unsigned char *mssgData) {
+	print_line("Create entity request recieved!");
+	//Create a new entity info refrence to store on the client side
+	Ref<EntityInfo> entityInfo(memnew(EntityInfo));
+
+	//Deseralize the message data into the reference
+	entityInfo->deserialize_info(mssgData);
+
+	//==Instantiate the network entity at the specified path relative to the zone==//
+	//Store local references to relevant objects
+	EntityID_t entityId = entityInfo->get_entity_id();
+	ZoneID_t parentZoneId = entityInfo->m_entityInfo.parentZone;
+	Zone* parentZone = GDNet::singleton->m_zoneRegistry[parentZoneId].zone;
+	String parentRelativePath = entityInfo->get_parent_relative_path();
+
+	//Instantiate the entity
+	Node* instance = GDNet::singleton->m_networkEntityRegistry[entityId].scene->instantiate();
+	entityInfo->m_entityInfo.entityInstance = Object::cast_to<NetworkEntity>(instance);
+
+	//Add the entity to the zone scene
+	Node *parentNode = parentZone->m_zoneInstance->get_node(parentRelativePath);
+	parentNode->add_child(instance);
+
+	//Add the entity to list of known entities in zone
+	parentZone->m_entitiesInZone[entityInfo->m_entityInfo.networkId] = entityInfo;
+
+	//Send entity creation acknowledgement to server
+	EntityNetworkID_t networkId = entityInfo->m_entityInfo.networkId;
+	HSteamNetConnection worldConn = GDNet::singleton->world->m_worldConnection;
+
+	SteamNetworkingMessage_t* ackMssg = create_small_message(CREATE_ENTITY_ACKNOWLEDGE, networkId, parentZoneId, worldConn);
+	send_message(ackMssg);
+}
+
+void World::CLIENT_SIDE_load_zone_request(const unsigned char *mssgData) {
+	ZoneID_t zoneId = deserialize_mini(mssgData);
+	print_line(vformat("Loading zone with id %d", zoneId));
+
+	instantiate_zone_by_id(zoneId);
+}
+
+void World::CLIENT_SIDE_assign_player_id(const unsigned char *mssgData) {
+	PlayerID_t id = deserialize_mini(mssgData);
+	print_line(vformat("Assigned player id is %d", id));
+
+	//Since this entire loop is running in a different thread from the main thread/game loop,
+	//the signal has to be queued to be emitted at the next game loop call.
+	call_deferred("emit_signal", "joined_world");
+}
+
 
 void World::CLIENT_SIDE_connection_status_changed(SteamNetConnectionStatusChangedCallback_t *pInfo) {
 	//What's the state of the connection?
@@ -271,7 +394,7 @@ void World::CLIENT_SIDE_poll_incoming_messages() {
 		}
 
 		if (numMsgs < 0) {
-			ERR_FAIL_MSG("Error checking messages");
+			ERR_PRINT("Error checking messages");
 			m_clientRunLoop = false;
 			return;
 		}
@@ -281,30 +404,20 @@ void World::CLIENT_SIDE_poll_incoming_messages() {
 			SteamNetworkingMessage_t *pMessage = pIncomingMsgs[i];
 			const unsigned char *mssgData = static_cast<unsigned char *>(pMessage->m_pData);
 
-			//Check the type of message recieved
+			//Check the type of message recieved and evaluate accordingly
 			switch (mssgData[0]) {
-				case ASSIGN_PLAYER_ID: {
-					PlayerID_t id = deserialize_mini(mssgData);
-					print_line(vformat("Assigned player id is %d", id));
-
-					//Since this entire loop is running in a different thread from the main thread/game loop,
-					//the signal has to be queued to be emitted at the next game loop call.
-					call_deferred("emit_signal", "joined_world");
+				case ASSIGN_PLAYER_ID:
+					CLIENT_SIDE_assign_player_id(mssgData);
 					break;
-				}
-				case LOAD_ZONE_ACCEPT: {
-					ZoneID_t zoneId = deserialize_mini(mssgData);
-					print_line(vformat("Loading zone with id %d", zoneId));
-
-					instantiate_zone_by_id(zoneId);
-
+				case LOAD_ZONE_REQUEST:
+					CLIENT_SIDE_load_zone_request(mssgData);
 					break;
-				}
-				case PLAYER_ENTERED_ZONE: {
-					PlayerID_t playerId = deserialize_mini(mssgData);
-
+				case PLAYER_ENTERED_ZONE:
+					CLIENT_SIDE_player_entered_zone(mssgData);
 					break;
-				}
+				case CREATE_ENTITY_REQUEST:
+					CLIENT_SIDE_process_create_entity_request(mssgData);
+					break;
 				default:
 					break;
 			}
@@ -476,7 +589,7 @@ bool World::load_zone_by_name(String zoneName) {
 			print_line("Zone Found! sending load zone request.");
 			ZoneID_t zoneId = it->second.id;
 			SteamNetworkingMessage_t *pLoadZoneRequest = create_mini_message(LOAD_ZONE_REQUEST, zoneId, m_worldConnection);
-			send_message(m_worldConnection, pLoadZoneRequest);
+			send_message(pLoadZoneRequest);
 			return true;
 		}
 	}
@@ -495,7 +608,7 @@ bool World::load_zone_by_id(ZoneID_t zoneId) {
 	if (it != GDNet::singleton->m_zoneRegistry.end()) {
 		print_line("Zone Found! sending load zone request.");
 		SteamNetworkingMessage_t *pLoadZoneRequest = create_mini_message(LOAD_ZONE_REQUEST, zoneId, m_worldConnection);
-		send_message(m_worldConnection, pLoadZoneRequest);
+		send_message(pLoadZoneRequest);
 		return true;
 	}else{
 		return false;

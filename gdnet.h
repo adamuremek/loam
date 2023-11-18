@@ -5,77 +5,95 @@
 #include "include/steam/isteamnetworkingsockets.h"
 #include "scene/main/node.h"
 #include "scene/resources/packed_scene.h"
+#include <algorithm>
+#include <cstdint>
 #include <map>
 #include <stack>
 #include <thread>
 #include <unordered_set>
 #include <vector>
-#include <algorithm>
-#include <cstdint>
 
 //===============Data and Types===============//
-//Control Message Types
+//Control Message Types (these are basically events that are fired across the network)
 #define ASSIGN_PLAYER_ID static_cast<unsigned char>(0x01)
+
 #define LOAD_ZONE_REQUEST static_cast<unsigned char>(0x02)
-#define LOAD_ZONE_ACCEPT static_cast<unsigned char>(0x03)
-#define LOAD_ZONE_DENY static_cast<unsigned char>(0x04)
-#define PLAYER_ENTERED_ZONE static_cast<unsigned char>(0x05)
-#define PLAYER_LEFT_ZONE static_cast<unsigned char>(0x06)
-#define CREATE_ENTITY_REQUEST static_cast<unsigned char>(0x07)
-#define CREATE_ENTITY_START static_cast<unsigned char>(0x08)
-#define CREATE_ENTITY_FINISH static_cast<unsigned char>(0x09)
+#define LOAD_ZONE_DENY static_cast<unsigned char>(0x03)
+#define LOAD_ZONE_ACKNOWLEDGE static_cast<unsigned char>(0x04)
+#define LOAD_ZONE_COMPLETE static_cast<unsigned char>(0x05)
+
+#define PLAYER_ENTERED_ZONE static_cast<unsigned char>(0x06)
+#define PLAYER_LEFT_ZONE static_cast<unsigned char>(0x07)
+
+#define CREATE_ENTITY_REQUEST static_cast<unsigned char>(0x08)
+#define CREATE_ENTITY_DENY static_cast<unsigned char>(0x09)
+#define CREATE_ENTITY_ACKNOWLEDGE static_cast<unsigned char>(0x0A)
+#define CREATE_ENTITY_COMPLETE static_cast<unsigned char>(0x0B)
 
 typedef uint32_t PlayerID_t;
 typedef uint32_t EntityNetworkID_t;
 typedef uint32_t EntityID_t;
-typedef uint16_t ZoneID_t;
+typedef uint32_t ZoneID_t;
 typedef uint8_t MessageType_t;
 
 //Forward declarations
 class Zone;
 class World;
+class EntityInfo;
+class NetworkEntity;
+struct ZoneInfo;
 
 struct PlayerInfo {
-	//Connection handle (id)
+	//Connection handle
 	HSteamNetConnection m_hConn;
 	PlayerID_t id;
+	//std::vector<ZoneInfo> loadedZones;
+	std::map<ZoneID_t, std::vector<Ref<EntityInfo>>> associatedEntities;
 };
 
-struct NetworkEntityInfo{
+struct NetworkEntityInfo {
 	EntityID_t id;
 	String name;
 	Ref<PackedScene> scene;
 };
 
-struct ZoneInfo{
+struct ZoneInfo {
 	ZoneID_t id;
 	String name;
-	Zone* zone;
+	Zone *zone;
 };
 
-struct EntityInfo_t{
+struct EntityInfo_t {
 	String entityName;
+	String parentRelativePath;
+	ZoneID_t parentZone;
 	EntityID_t entityId;
+	EntityNetworkID_t networkId;
 	PlayerID_t associatedPlayer;
 	std::vector<unsigned char> dataBuffer;
+
+	NetworkEntity *entityInstance;
+	std::vector<PlayerID_t> creationAcks;
 };
 
 //===============Messaging===============//
-SteamNetworkingMessage_t *allocate_message(const unsigned char* data, const int sizeOfData, const HSteamNetConnection &destination);
+SteamNetworkingMessage_t *allocate_message(const unsigned char *data, const int sizeOfData, const HSteamNetConnection &destination);
 SteamNetworkingMessage_t *create_mini_message(MessageType_t messageType, unsigned int value, const HSteamNetConnection &destination);
 SteamNetworkingMessage_t *create_small_message(MessageType_t messageType, unsigned int value1, unsigned int value2, const HSteamNetConnection &destination);
 //SteamNetworkingMessage_t *instantiate_entity_message(const EntityID_t entityID, String parentNode, const HSteamNetConnection &destination);
 
-void serialize_int(int value, int startIdx, unsigned char* buffer);
-void serialize_uint(unsigned int value, int startIdx, unsigned char* buffer);
-unsigned int deserialize_uint(int startIdx, const unsigned char* buffer);
-void copy_string_to_buffer(const char* string, unsigned char* buffer, int startIDx, int stringSize);
-
+void serialize_int(int value, int startIdx, unsigned char *buffer);
+void serialize_uint(unsigned int value, int startIdx, unsigned char *buffer);
+void serialize_string();
+unsigned int deserialize_uint(int startIdx, const unsigned char *buffer);
+int deserialize_int(int startIdx, const unsigned char *buffer);
+String deserialize_string(int startIdx, int stringLength, const unsigned char *buffer);
+void copy_string_to_buffer(const char *string, unsigned char *buffer, int startIDx, int stringSize);
 
 unsigned int deserialize_mini(const unsigned char *data);
 void deserialize_small(const char *data, unsigned int &value1, unsigned int &value2);
 
-void send_message(const HSteamNetConnection &destination, SteamNetworkingMessage_t *message);
+void send_message(SteamNetworkingMessage_t *message);
 
 //===============ID Generator===============//
 
@@ -98,11 +116,12 @@ public:
 
 //===============Entity Info===============//
 
-class EntityInfo : public RefCounted{
+class EntityInfo : public RefCounted {
 	GDCLASS(EntityInfo, RefCounted);
 
 protected:
 	static void _bind_methods();
+
 public:
 	EntityInfo_t m_entityInfo;
 
@@ -111,11 +130,14 @@ public:
 
 	bool verify_info();
 	void serialize_info();
+	void deserialize_info(const unsigned char *data);
 
 	void set_entity_name(String name);
+	void set_parent_relative_path(String path);
 	void set_entity_id(EntityID_t id);
 	void set_associated_player_id(PlayerID_t associatedPlayer);
 	String get_entity_name();
+	String get_parent_relative_path();
 	EntityID_t get_entity_id();
 	PlayerID_t get_associated_player_id();
 };
@@ -129,20 +151,19 @@ private:
 	static ZoneID_t m_zoneIDCounter;
 
 	bool register_network_entities();
-	World* get_world_singleton();
+	World *get_world_singleton();
 
 protected:
 	static void _bind_methods();
 
 public:
-	static GDNet* singleton;
+	static GDNet *singleton;
 	std::map<EntityID_t, NetworkEntityInfo> m_networkEntityRegistry;
 	std::map<ZoneID_t, ZoneInfo> m_zoneRegistry;
-	World* world;
+	World *world;
 	bool m_isInitialized;
 	bool m_isClient;
 	bool m_isServer;
-
 
 	GDNet();
 	~GDNet();
@@ -189,7 +210,6 @@ class Zone : public Node {
 	GDCLASS(Zone, Node);
 
 private:
-	Node *m_zoneInstance = nullptr;
 	Ref<PackedScene> m_zoneScene;
 
 protected:
@@ -197,9 +217,12 @@ protected:
 	void _notification(int n_type);
 
 public:
+	std::vector<PlayerID_t> m_playersInZone;
+	std::map<EntityNetworkID_t, Ref<EntityInfo>> m_entitiesInZone;
+
 	ZoneID_t m_zoneId = 0U;
 	bool m_instantiated = false;
-	std::vector<PlayerID_t> m_playersInZone;
+	Node *m_zoneInstance = nullptr;
 
 	Zone();
 	~Zone();
@@ -236,6 +259,11 @@ private:
 	void player_connected(HSteamNetConnection playerConnection);
 	void player_disconnected(HSteamNetConnection playerConnection);
 	void remove_player(HSteamNetConnection hConn);
+
+	void SERVER_SIDE_load_zone_request(const unsigned char *mssgData, HSteamNetConnection sourceConn);
+	void SERVER_SIDE_create_entity_request(const unsigned char *mssgData);
+	void SERVER_SIDE_create_entity_acknowledge(const unsigned char *mssgData);
+
 	void SERVER_SIDE_connection_status_changed(SteamNetConnectionStatusChangedCallback_t *pInfo);
 	void SERVER_SIDE_poll_incoming_messages();
 	void server_listen_loop();
@@ -245,6 +273,12 @@ private:
 	std::thread m_clientListenThread;
 
 	static void CLIENT_SIDE_CONN_CHANGE(SteamNetConnectionStatusChangedCallback_t *pInfo);
+
+	void CLIENT_SIDE_player_entered_zone(const unsigned char *mssgData);
+	void CLIENT_SIDE_load_zone_request(const unsigned char *mssgData);
+	void CLIENT_SIDE_assign_player_id(const unsigned char *mssgData);
+	void CLIENT_SIDE_process_create_entity_request(const unsigned char *mssgData);
+
 	void CLIENT_SIDE_connection_status_changed(SteamNetConnectionStatusChangedCallback_t *pInfo);
 	void CLIENT_SIDE_poll_incoming_messages();
 	void client_listen_loop();
@@ -275,7 +309,6 @@ public:
 
 	//Both
 	bool player_exists(PlayerID_t playerId);
-
 };
 
 #endif
