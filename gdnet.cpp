@@ -39,7 +39,7 @@ bool GDNet::register_network_entities() {
 	}
 
 	//Define an id counter for assigning entity ids
-	EntityID_t newEntityId = 1;
+	EntityID_t newEntityId = 1U;
 
 	//Start directory listing
 	dir->list_dir_begin();
@@ -51,6 +51,11 @@ bool GDNet::register_network_entities() {
 		if (dir->current_is_dir()) {
 			file_name = dir->_get_next();
 			continue;
+		}
+
+		//Trim ".remap" extension from the file name (these appear when running exported binaries)
+		if(file_name.ends_with(".remap")){
+			file_name = file_name.left(file_name.length() - 6);
 		}
 
 		//When a scene is found, open it and evaluate it
@@ -67,9 +72,9 @@ bool GDNet::register_network_entities() {
 					info.id = newEntityId;
 					info.name = file_name.get_basename();
 					info.scene = network_entity_scene;
-
+					
 					//Register entity info
-					m_networkEntityRegistry[newEntityId] = info;
+					m_networkEntityRegistry.insert(newEntityId, info);
 
 					//Increment new entity id for future entities
 					newEntityId++;
@@ -86,33 +91,39 @@ bool GDNet::register_network_entities() {
 }
 
 World *GDNet::get_world_singleton() {
-	return  world;
+	return world;
 }
 
 void GDNet::register_zone(Zone *zone) {
+	//Create the info struct for this zone
 	ZoneInfo zoneInfo{};
 	zoneInfo.id = m_zoneIDCounter;
 	zoneInfo.name = zone->get_name();
 	zoneInfo.zone = zone;
 
-	m_zoneRegistry[zoneInfo.id] = zoneInfo;
+	//Assign the actual zone instance its ID
+	zone->m_zoneId = zoneInfo.id;
+
+	//Register the zone (and incrment the zone counter)
+	m_zoneRegistry.insert(zoneInfo.id, zoneInfo);
 	m_zoneIDCounter++;
 }
 
 void GDNet::unregister_zone(Zone *zone) {
+	//Remove the zone from the registry and reset its id
 	m_zoneRegistry.erase(zone->m_zoneId);
-	zone->m_zoneId = 0;
+	zone->m_zoneId = 0U;
 }
 
 void GDNet::init_gdnet() {
 	SteamDatagramErrMsg errMsg;
 	if (!GameNetworkingSockets_Init(nullptr, errMsg)) {
-		ERR_FAIL_MSG("Could not initialize GameNetworkingSockets!");
+		ERR_PRINT("Could not initialize GameNetworkingSockets!");
 		return;
 	}
 
 	if (!register_network_entities()) {
-		ERR_FAIL_MSG("Could not load network entities!");
+		ERR_PRINT("Could not load network entities!");
 		return;
 	}
 
@@ -144,11 +155,9 @@ bool GDNet::entity_exists(EntityID_t entityId) {
 }
 
 EntityID_t GDNet::get_entity_id_by_name(String entityName) {
-	std::map<EntityID_t, NetworkEntityInfo>::iterator it;
-
-	for(it = m_networkEntityRegistry.begin(); it != m_networkEntityRegistry.end(); ++it){
-		if(it->second.name == entityName){
-			return it->first;
+	for(const KeyValue<EntityID_t, NetworkEntityInfo> &element : m_networkEntityRegistry){
+		if(element.value.name == entityName){
+			return element.key;
 		}
 	}
 

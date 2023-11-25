@@ -10,10 +10,11 @@ void initialize_gdnet_module(ModuleInitializationLevel p_level) {
 	 }
 
 	 ClassDB::register_class<GDNet>();
-	 ClassDB::register_class<NetworkEntity>();
-	 ClassDB::register_class<World>();
-	 ClassDB::register_class<Zone>();
+	 ClassDB::register_class<PlayerInfo>();
 	 ClassDB::register_class<EntityInfo>();
+	 ClassDB::register_class<NetworkEntity>();
+	 ClassDB::register_class<Zone>();
+	 ClassDB::register_class<World>();
 
 	 p_gdnetSingleton = memnew(GDNet);
 	 GDNet::singleton = p_gdnetSingleton;

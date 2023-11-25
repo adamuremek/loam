@@ -1,17 +1,16 @@
 #include "gdnet.h"
-#include "include/steam/isteamnetworkingutils.h"
-#include "include/steam/steamnetworkingsockets.h"
 
-void serialize_int(int value, int startIdx, unsigned char* buffer){
+
+void serialize_int(int value, int startIdx, Vector<unsigned char> &buffer){
 	for (int i = startIdx; i < startIdx + sizeof(int); i++) {
-		buffer[i] = static_cast<unsigned char>(value & 0xFF);
+		buffer.set(i, static_cast<unsigned char>(value & 0xFF));
 		value >>= 8;
 	}
 }
 
-void serialize_uint(unsigned int value, int startIdx, unsigned char *buffer) {
+void serialize_uint(unsigned int value, int startIdx, Vector<unsigned char> &buffer) {
 	for (int i = startIdx; i < startIdx + sizeof(unsigned int); i++) {
-		buffer[i] = static_cast<unsigned char>(value & 0xFF);
+		buffer.set(i, static_cast<unsigned char>(value & 0xFF));
 		value >>= 8;
 	}
 }
@@ -41,13 +40,14 @@ unsigned int deserialize_uint(int startIdx, const unsigned char* buffer){
 }
 
 String deserialize_string(int startIdx, int stringLength, const unsigned char* buffer){
-	unsigned char strData[stringLength];
+	Vector<unsigned char> strData;
+	strData.resize(stringLength);
 
 	for(int i = 0; i < stringLength; i++){
-		strData[i] = buffer[startIdx + i];
+		strData.set(i, buffer[startIdx + i]);
 	}
 
-	return String::utf8((const char*)strData);
+	return String((const char*)strData.ptr());
 }
 
 void copy_string_to_buffer(const char *string, unsigned char *buffer, int startIDx, int stringSize) {
@@ -80,25 +80,29 @@ SteamNetworkingMessage_t *allocate_message(const unsigned char *data, const int 
 SteamNetworkingMessage_t *create_mini_message(MessageType_t messageType, unsigned int value, const HSteamNetConnection &destination) {
 	//Create the message data
 	const int sizeOfData = 1 + sizeof(unsigned int);
-	unsigned char data[sizeOfData];
+	Vector<unsigned char> data;
+	data.resize(sizeOfData);
 
 	//Assign message type in the buffer
-	data[0] = messageType;
+	data.set(0, messageType);
 
 	//Populate message data
 	serialize_uint(value, 1, data);
 
+	unsigned char* test = data.ptrw();
+
 	// Return message
-	return allocate_message(data, sizeOfData, destination);
+	return allocate_message(data.ptr(), sizeOfData, destination);
 }
 
 SteamNetworkingMessage_t *create_small_message(MessageType_t messageType, unsigned int value1, unsigned int value2, const HSteamNetConnection &destination) {
 	// Create the message data
 	const int sizeOfData = 1 + (2 * sizeof(unsigned int));
-	unsigned char data[sizeOfData];
+	Vector<unsigned char> data;
+	data.resize(sizeOfData);
 
 	//Assign message type in the buffer
-	data[0] = messageType;
+	data.set(0, messageType);
 
 	// Populate the message data
 	//TODO: Maybe reconsider hardcoding the start index, differnt architectures could define the size of the types diffently and byte ;) me in the ass.
@@ -106,7 +110,7 @@ SteamNetworkingMessage_t *create_small_message(MessageType_t messageType, unsign
 	serialize_uint(value2, 5, data);
 
 	// Return the message
-	return allocate_message(data, sizeOfData, destination);
+	return allocate_message(data.ptr(), sizeOfData, destination);
 }
 
 
@@ -131,9 +135,16 @@ void deserialize_small(const char *data, unsigned int &value1, unsigned int &val
 	value2 = result2;
 }
 
-void send_message(SteamNetworkingMessage_t *message) {
+void send_message_reliable(SteamNetworkingMessage_t *message) {
 	//Send the message
 	SteamNetworkingSockets()->SendMessageToConnection(message->m_conn, message->m_pData, message->m_cbSize, k_nSteamNetworkingSend_Reliable, nullptr);
+	//Free memory from the message
+	message->Release();
+}
+
+void send_message_unreliable(SteamNetworkingMessage_t *message){
+	//Send the message
+	SteamNetworkingSockets()->SendMessageToConnection(message->m_conn, message->m_pData, message->m_cbSize, k_nSteamNetworkingSend_Unreliable, nullptr);
 	//Free memory from the message
 	message->Release();
 }

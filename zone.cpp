@@ -11,6 +11,7 @@ void Zone::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_zone_scene"), &Zone::get_zone_scene);
 	ClassDB::bind_method(D_METHOD("set_zone_scene", "zone_scene"), &Zone::set_zone_scene);
 	ClassDB::bind_method(D_METHOD("instantiate_zone"), &Zone::instantiate_zone);
+	ClassDB::bind_method(D_METHOD("create_entity", "entity_info"), &Zone::create_entity);
 
 	//Expose zone scene property to be set in the inspector
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "Zone Scene", PROPERTY_HINT_RESOURCE_TYPE, "PackedScene"), "set_zone_scene", "get_zone_scene");
@@ -58,12 +59,18 @@ void Zone::instantiate_zone() {
 	m_instantiated = true;
 }
 
-void Zone::add_player(PlayerID_t playerId) {
-	m_playersInZone.push_back(playerId);
+void Zone::add_player(Ref<PlayerInfo> playerInfo) {
+	m_playersInZone.push_back(playerInfo);
 }
 
 bool Zone::player_in_zone(PlayerID_t playerId) {
-	return std::find(m_playersInZone.begin(), m_playersInZone.end(), playerId) != m_playersInZone.end();
+	for(const Ref<PlayerInfo> &player : m_playersInZone){
+		if(player->get_player_id() == playerId){
+			return true;
+		}
+	}
+
+	return false;
 }
 
 void Zone::instantiate_network_entity(EntityID_t entityId, String parentNode) {
@@ -86,7 +93,7 @@ void Zone::instantiate_network_entity(EntityID_t entityId, String parentNode) {
 
 void Zone::create_entity(Ref<EntityInfo> entityInfo) {
 	//Make sure a world is being hosted or a world is connected to before trying to instantiate entities.
-	if(!GDNet::singleton->is_client() || !GDNet::singleton->is_server()){
+	if(!GDNet::singleton->is_client() && !GDNet::singleton->is_server()){
 		ERR_PRINT("Cannot create an entity if not hosting or connected to a world!");
 		return;
 	}
@@ -109,19 +116,23 @@ void Zone::create_entity(Ref<EntityInfo> entityInfo) {
 		return;
 	}
 
+	//Set the entity's parent zone id
+	entityInfo->m_entityInfo.parentZone = m_zoneId;
+
 	//Serialize the entity info
 	entityInfo->serialize_info();
-	unsigned char* data = entityInfo->m_entityInfo.dataBuffer.data();
-	int dataLen = entityInfo->m_entityInfo.dataBuffer.size();
+
+	//Make the message a creation request and prepare the data
+	entityInfo->m_entityInfo.dataBuffer.set(0, CREATE_ENTITY_REQUEST);
+	const unsigned char* mssgData = entityInfo->m_entityInfo.dataBuffer.ptr();
+	int mssgDataLen = entityInfo->m_entityInfo.dataBuffer.size();
 
 
 	if(GDNet::singleton->is_client()){
-		//Make this message an entity creation request
-		data[0] = CREATE_ENTITY_REQUEST;
-
 		//Create and send the message
-		SteamNetworkingMessage_t* mssg = allocate_message(data, dataLen, GDNet::singleton->world->m_worldConnection);
-		send_message(mssg);
+		SteamNetworkingMessage_t* mssg = allocate_message(mssgData, mssgDataLen, GDNet::singleton->world->m_worldConnection);
+		send_message_reliable(mssg);
+		print_line("Sent entity creation request! :)");
 	}
 
 
