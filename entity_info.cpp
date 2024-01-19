@@ -6,20 +6,27 @@ EntityInfo::EntityInfo() :
 EntityInfo::~EntityInfo() {}
 
 void EntityInfo::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("set_entity_name", "name"), &EntityInfo::set_entity_name);
-	ClassDB::bind_method(D_METHOD("set_parent_relative_path", "path"), &EntityInfo::set_parent_relative_path);
-	ClassDB::bind_method(D_METHOD("set_entity_id", "id"), &EntityInfo::set_entity_id);
-	ClassDB::bind_method(D_METHOD("set_associated_player_id", "associatedPlayer"), &EntityInfo::set_associated_player_id);
-
 	ClassDB::bind_method(D_METHOD("get_entity_name"), &EntityInfo::get_entity_name);
 	ClassDB::bind_method(D_METHOD("get_parent_relative_path"), &EntityInfo::get_parent_relative_path);
 	ClassDB::bind_method(D_METHOD("get_entity_id"), &EntityInfo::get_entity_id);
-	ClassDB::bind_method(D_METHOD("get_associated_player_id"), &EntityInfo::get_associated_player_id);
+	ClassDB::bind_method(D_METHOD("get_owner_id"), &EntityInfo::get_owner_id);
+	ClassDB::bind_method(D_METHOD("get_initial_position_3d"), &EntityInfo::get_initial_position_3D);
+	ClassDB::bind_method(D_METHOD("get_initial_position_2d"), &EntityInfo::get_initial_position_2D);
+
+	ClassDB::bind_method(D_METHOD("set_entity_name", "name"), &EntityInfo::set_entity_name);
+	ClassDB::bind_method(D_METHOD("set_parent_relative_path", "path"), &EntityInfo::set_parent_relative_path);
+	ClassDB::bind_method(D_METHOD("set_entity_id", "id"), &EntityInfo::set_entity_id);
+	ClassDB::bind_method(D_METHOD("set_owner_id", "associatedPlayer"), &EntityInfo::set_owner_id);
+	ClassDB::bind_method(D_METHOD("set_initial_position_3d", "position"), &EntityInfo::set_initial_position_3D);
+	ClassDB::bind_method(D_METHOD("set_initial_position_2d", "position"), &EntityInfo::set_initial_position_2D);
 
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "name"), "set_entity_name", "get_entity_name");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "parentRelativePath"), "set_parent_relative_path", "get_parent_relative_path");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "entity_id"), "set_entity_id", "get_entity_id");
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "associated_player"), "set_associated_player_id", "get_associated_player_id");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "owner_id"), "set_owner_id", "get_owner_id");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "initial_position_3d", PROPERTY_HINT_RANGE, "-99999,99999,0.001,or_greater,or_less,hide_slider,suffix:m", PROPERTY_USAGE_EDITOR), "set_initial_position_3d", "get_initial_position_3d");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "initial_position_2d", PROPERTY_HINT_RANGE, "-99999,99999,0.001,or_greater,or_less,hide_slider,suffix:m", PROPERTY_USAGE_EDITOR), "set_initial_position_2d", "get_initial_position_2d");
+
 }
 
 bool EntityInfo::verify_info() {
@@ -47,8 +54,8 @@ bool EntityInfo::verify_info() {
 	}
 
 	// Make sure the player exists somewhere in the world if one was provided
-	if(m_entityInfo.associatedPlayer > 0 && !GDNet::singleton->world->player_exists(m_entityInfo.associatedPlayer)){
-		ERR_PRINT(vformat("No player with id \"%d\" exists in this current world!", m_entityInfo.associatedPlayer));
+	if(m_entityInfo.owner > 0 && !GDNet::singleton->world->player_exists(m_entityInfo.owner)){
+		ERR_PRINT(vformat("No player with id \"%d\" exists in this current world!", m_entityInfo.owner));
 		return false;
 	}
 
@@ -68,7 +75,7 @@ void EntityInfo::serialize_info() {
 	//Size the data buffer
 	// request type + name char len + name + path char len + path + parent zone id
 	// + entity id + network id + ass. player id
-	int bufferSize = 1 + (6 * sizeof(uint32_t)) + nameLen + pathLen;
+	int bufferSize = 1 + (6 * sizeof(uint32_t)) + nameLen + pathLen + sizeof(Vector3) + sizeof(Vector2);
 	m_entityInfo.dataBuffer.resize(bufferSize);
 
 	//Start an idx counter and keep note of 32 bit integer size (it should almost always be 4 bytes, idk why I did this)
@@ -114,7 +121,15 @@ void EntityInfo::serialize_info() {
 	bufferIdx += numericSize;
 
 	//Add the associated player id to the buffer
-	serialize_uint(m_entityInfo.associatedPlayer, bufferIdx, m_entityInfo.dataBuffer);
+	serialize_uint(m_entityInfo.owner, bufferIdx, m_entityInfo.dataBuffer);
+	bufferIdx += numericSize;
+
+	//Add the initial position 3D to the buffer
+	serialize_basic(m_entityInfo.initialPosition3D, bufferIdx, m_entityInfo.dataBuffer);
+	bufferIdx += sizeof(Vector3);
+
+	//Add the initial position 2D to the buffer
+	serialize_basic(m_entityInfo.initialPosition2D, bufferIdx, m_entityInfo.dataBuffer);
 }
 
 void EntityInfo::deserialize_info(const unsigned char *data) {
@@ -147,27 +162,19 @@ void EntityInfo::deserialize_info(const unsigned char *data) {
 	m_entityInfo.networkId = deserialize_uint(bufferIdx, data);
 	bufferIdx += numericSize;
 
-	//Get the associated player id
-	m_entityInfo.associatedPlayer = deserialize_uint(bufferIdx, data);
+	//Get the owner id
+	m_entityInfo.owner = deserialize_uint(bufferIdx, data);
+	bufferIdx += numericSize;
+
+	//Get the initial position 3D
+	m_entityInfo.initialPosition3D = deserialize_basic<Vector3>(bufferIdx, data);
+	bufferIdx += sizeof(Vector3);
+
+	//Get the initial position 2D
+	m_entityInfo.initialPosition2D = deserialize_basic<Vector2>(bufferIdx, data);
 }
 
 //==================GETTERS AND SETTERS==================//
-
-void EntityInfo::set_entity_name(String name) {
-	m_entityInfo.entityName = name;
-}
-
-void EntityInfo::set_parent_relative_path(String path) {
-	m_entityInfo.parentRelativePath = path;
-}
-
-void EntityInfo::set_entity_id(EntityID_t id) {
-	m_entityInfo.entityId = id;
-}
-
-void EntityInfo::set_associated_player_id(PlayerID_t associatedPlayer) {
-	m_entityInfo.associatedPlayer = associatedPlayer;
-}
 
 String EntityInfo::get_entity_name() {
 	return m_entityInfo.entityName;
@@ -181,6 +188,47 @@ EntityID_t EntityInfo::get_entity_id() {
 	return m_entityInfo.entityId;
 }
 
-PlayerID_t EntityInfo::get_associated_player_id() {
-	return m_entityInfo.associatedPlayer;
+PlayerID_t EntityInfo::get_owner_id() {
+	return m_entityInfo.owner;
+}
+
+EntityNetworkID_t EntityInfo::get_network_id() {
+	return m_entityInfo.networkId;
+}
+
+Vector3 EntityInfo::get_initial_position_3D() {
+	return m_entityInfo.initialPosition3D;
+}
+
+Vector2 EntityInfo::get_initial_position_2D() {
+	return m_entityInfo.initialPosition2D;
+}
+
+
+void EntityInfo::set_entity_name(String name) {
+	m_entityInfo.entityName = name;
+}
+
+void EntityInfo::set_parent_relative_path(String path) {
+	m_entityInfo.parentRelativePath = path;
+}
+
+void EntityInfo::set_entity_id(EntityID_t id) {
+	m_entityInfo.entityId = id;
+}
+
+void EntityInfo::set_owner_id(PlayerID_t ownerId) {
+	m_entityInfo.owner = ownerId;
+}
+
+void EntityInfo::set_network_id(EntityNetworkID_t networkId) {
+	m_entityInfo.networkId = networkId;
+}
+
+void EntityInfo::set_initial_position_3D(Vector3 pos) {
+	m_entityInfo.initialPosition3D = pos;
+}
+
+void EntityInfo::set_initial_position_2D(Vector2 pos) {
+	m_entityInfo.initialPosition2D = pos;
 }

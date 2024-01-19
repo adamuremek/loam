@@ -21,9 +21,11 @@ void GDNet::cleanup() {
 }
 
 void GDNet::_bind_methods() {
-	ClassDB::bind_method("init_gdnet", &GDNet::init_gdnet);
-	ClassDB::bind_method("shutdown_gdnet", &GDNet::shutdown_gdnet);
-	ClassDB::bind_method("get_world_singleton", &GDNet::get_world_singleton);
+	ClassDB::bind_method(D_METHOD("init_gdnet"), &GDNet::init_gdnet);
+	ClassDB::bind_method(D_METHOD("shutdown_gdnet"), &GDNet::shutdown_gdnet);
+	ClassDB::bind_method(D_METHOD("get_world_singleton"), &GDNet::get_world_singleton);
+	ClassDB::bind_method(D_METHOD("is_client"), &GDNet::is_client);
+	ClassDB::bind_method(D_METHOD("is_server"), &GDNet::is_server);
 }
 
 bool GDNet::register_network_entities() {
@@ -68,7 +70,7 @@ bool GDNet::register_network_entities() {
 			if (network_entity_scene.is_valid()) {
 				Node *root_node = network_entity_scene->instantiate();
 				if(root_node->get_class_name() == "NetworkEntity"){
-					NetworkEntityInfo info{};
+					NetworkEntityInfo_t info{};
 					info.id = newEntityId;
 					info.name = file_name.get_basename();
 					info.scene = network_entity_scene;
@@ -96,13 +98,13 @@ World *GDNet::get_world_singleton() {
 
 void GDNet::register_zone(Zone *zone) {
 	//Create the info struct for this zone
-	ZoneInfo zoneInfo{};
+	ZoneInfo_t zoneInfo{};
 	zoneInfo.id = m_zoneIDCounter;
 	zoneInfo.name = zone->get_name();
 	zoneInfo.zone = zone;
 
 	//Assign the actual zone instance its ID
-	zone->m_zoneId = zoneInfo.id;
+	zone->set_zone_id(zoneInfo.id);
 
 	//Register the zone (and incrment the zone counter)
 	m_zoneRegistry.insert(zoneInfo.id, zoneInfo);
@@ -111,8 +113,8 @@ void GDNet::register_zone(Zone *zone) {
 
 void GDNet::unregister_zone(Zone *zone) {
 	//Remove the zone from the registry and reset its id
-	m_zoneRegistry.erase(zone->m_zoneId);
-	zone->m_zoneId = 0U;
+	m_zoneRegistry.erase(zone->get_zone_id());
+	zone->set_zone_id(0U);
 }
 
 void GDNet::init_gdnet() {
@@ -155,7 +157,7 @@ bool GDNet::entity_exists(EntityID_t entityId) {
 }
 
 EntityID_t GDNet::get_entity_id_by_name(String entityName) {
-	for(const KeyValue<EntityID_t, NetworkEntityInfo> &element : m_networkEntityRegistry){
+	for(const KeyValue<EntityID_t, NetworkEntityInfo_t> &element : m_networkEntityRegistry){
 		if(element.value.name == entityName){
 			return element.key;
 		}
