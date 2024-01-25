@@ -33,6 +33,7 @@ void NetworkEntity::_notification(int n_type) {
 		case NOTIFICATION_EXIT_TREE: {
 			break;
 		}
+		//TODO: This peice of shit requires the "func _process()" method to exist in gdscript to work. no idea why
 		case NOTIFICATION_PROCESS:{
 			_process(get_process_delta_time());
 			break;
@@ -63,10 +64,8 @@ void NetworkEntity::_process(float delta) {
 			}
 		}
 
-		print_line(m_transform2DSync.is_valid());
-		print_line(m_transform2DSync->has_target());
 		if(m_transform2DSync.is_valid() && m_transform2DSync->has_target()){
-			if(!has_ownership() && m_transform2DSync->get_authority() == SyncAuthority::OWNER_AUTHORITATIVE){
+			if(!has_ownership() && !m_transform2DSync->has_authority()){
 				m_transform2DSync->interpolate_origin(delta);
 			}
 		}
@@ -77,6 +76,9 @@ void NetworkEntity::_process(float delta) {
 bool NetworkEntity::has_ownership() {
 	if(GDNet::singleton->m_isClient){
 		return m_info->get_owner_id() == GDNet::singleton->world->get_player_id();
+	}
+	else if(GDNet::singleton->m_isServer){
+		return m_info->get_owner_id() == 0;
 	}
 
 	return false;
@@ -101,17 +103,15 @@ void NetworkEntity::SERVER_SIDE_recieve_data(EntityUpdateInfo_t updateInfo) {
 
 void NetworkEntity::SERVER_SIDE_transmit_data() {
 	//If a transform3dsync object was assigned, use it.
-	if(m_transform3DSync.is_valid()){
-		//Send the data to all plaeyrs in the zone
-		for(const KeyValue<PlayerID_t, Ref<PlayerInfo>> &player : m_parentZone->m_playersInZone){
-			m_transform3DSync->transmit_data(player.value->get_player_conn());
-		}
-	}
+//	if(m_transform3DSync.is_valid()){
+//		//Send the data to all players in the zone
+//		for(const KeyValue<PlayerID_t, Ref<PlayerInfo>> &player : m_parentZone->m_playersInZone){
+//			m_transform3DSync->transmit_data(player.value->get_player_conn());
+//		}
+//	}
 
 	if(m_transform2DSync.is_valid()){
-		for(const KeyValue<PlayerID_t, Ref<PlayerInfo>> &player : m_parentZone->m_playersInZone){
-			m_transform2DSync->transmit_data(player.value->get_player_conn());
-		}
+		m_transform2DSync->tick();
 	}
 }
 
@@ -128,6 +128,7 @@ void NetworkEntity::CLIENT_SIDE_recieve_data(EntityUpdateInfo_t updateInfo) {
 			break;
 		}
 		case TRANSFORM2D_SYNC_UPDATE:{
+
 			//Make sure a Transform2DSync module instance exists in case :p
 			if(m_transform2DSync.is_valid()){
 				//Only read from the data if the endpoint does not have authority
@@ -142,12 +143,12 @@ void NetworkEntity::CLIENT_SIDE_recieve_data(EntityUpdateInfo_t updateInfo) {
 
 void NetworkEntity::CLIENT_SIDE_transmit_data() {
 	//If a transform3dsync object was assigned, use it.
-	if(m_transform3DSync.is_valid() && m_transform3DSync->has_authority()){
-		m_transform3DSync->transmit_data(GDNet::singleton->world->m_worldConnection);
-	}
+//	if(m_transform3DSync.is_valid() && m_transform3DSync->has_authority()){
+//		m_transform3DSync->transmit_data(GDNet::singleton->world->m_worldConnection);
+//	}
 
-	if(m_transform2DSync.is_valid() && m_transform2DSync->has_authority()){
-		m_transform2DSync->transmit_data(GDNet::singleton->world->m_worldConnection);
+	if(m_transform2DSync.is_valid()){
+		m_transform2DSync->tick();
 	}
 }
 
@@ -170,8 +171,8 @@ void NetworkEntity::set_transform3d_sync(Ref<Transform3DSync> transform3DSync) {
 	m_transform3DSync->m_parentNetworkEntity = this;
 }
 
-void NetworkEntity::set_transform2d_sync(Ref<Transform2DSync> transform2DSycn) {
-	m_transform2DSync = transform2DSycn;
+void NetworkEntity::set_transform2d_sync(Ref<Transform2DSync> transform2DSync) {
+	m_transform2DSync = transform2DSync;
 	m_transform2DSync->m_parentNetworkEntity = this;
 }
 

@@ -7,6 +7,7 @@
 #include "core/templates/vector.h"
 #include "core/math/transform_2d.h"
 #include "core/math/transform_3d.h"
+#include "core/variant/variant.h"
 #include "include/steam/isteamnetworkingutils.h"
 #include "include/steam/steamnetworkingsockets.h"
 #include "scene/main/node.h"
@@ -42,11 +43,12 @@
 #define TRANSFORM3D_SYNC_UPDATE static_cast<unsigned char>(0x31)
 #define TRANSFORM2D_SYNC_UPDATE static_cast<unsigned char>(0x32)
 
-typedef uint32_t PlayerID_t;
-typedef uint32_t EntityNetworkID_t;
-typedef uint32_t EntityID_t;
-typedef uint32_t ZoneID_t;
-typedef uint8_t MessageType_t;
+using PlayerID_t = uint32_t;
+using EntityNetworkID_t = uint32_t ;
+using EntityID_t = uint32_t;
+using ZoneID_t = uint32_t;
+using PropertyID_t = uint32_t;
+using MessageType_t = uint8_t ;
 
 //Forward declarations
 class Zone;
@@ -60,7 +62,8 @@ struct ZoneInfo_t;
 //Enum Declarations
 enum SyncAuthority{
 	NONE,
-	OWNER_AUTHORITATIVE
+	OWNER_AUTHORITATIVE,
+	SERVER_AUTHORITATIVE
 };
 
 //Enum registrations
@@ -249,6 +252,8 @@ public:
 	void serialize_info();
 	void deserialize_info(const unsigned char *data);
 
+	//void add_();
+
 	String get_entity_name();
 	String get_parent_relative_path();
 	EntityID_t get_entity_id();
@@ -289,8 +294,10 @@ public:
 	NetworkEntity();
 
 	bool has_ownership();
+	void SERVER_SIDE_tick();
 	void SERVER_SIDE_recieve_data(EntityUpdateInfo_t updateInfo);
 	void SERVER_SIDE_transmit_data();
+	void CLINET_SIDE_tick();
 	void CLIENT_SIDE_recieve_data(EntityUpdateInfo_t updateInfo);
 	void CLIENT_SIDE_transmit_data();
 
@@ -299,7 +306,7 @@ public:
 	Ref<EntityInfo> get_entity_info();
 
 	void set_transform3d_sync(Ref<Transform3DSync> transform3DSync);
-	void set_transform2d_sync(Ref<Transform2DSync> transform2DSycn);
+	void set_transform2d_sync(Ref<Transform2DSync> transform2DSync);
 
 };
 
@@ -311,15 +318,28 @@ class NetworkModule : public RefCounted{
 private:
 	virtual void serialize_payload(EntityUpdateInfo_t &updateInfo);
 	virtual void deserialize_payload(const EntityUpdateInfo_t &updateInfo);
+protected:
+	int m_tickCount = 0;
+
+	//Transmission rate in HZ
+	int m_transmissionRate = 0;
+	//Default transmission rate is 20hz.
+	int m_maxTickCount = 50;
+
+	static void _bind_methods();
 public:
 	static const int METADATA_SIZE;
 	NetworkEntity *m_parentNetworkEntity = nullptr;
 
+	virtual void tick();
 	virtual void transmit_data(HSteamNetConnection destination);
 	virtual void recieve_data(EntityUpdateInfo_t updateInfo);
 	static void serialize_update_metadata(EntityUpdateInfo_t &updateInfo);
 	static EntityUpdateInfo_t deserialize_update_metadata(const unsigned char* mssgData, const int mssgLen);
 
+	int get_transmission_rate() const;
+
+	void set_transmission_rate(const int &transmissionRate);
 };
 
 //===============Transform 3D Sync===============//
@@ -365,6 +385,7 @@ class Transform2DSync : public NetworkModule {
 	GDCLASS(Transform2DSync, NetworkModule);
 
 private:
+	bool m_interpolate;
 	Transform2D global_transform;
 	Node2D* m_target;
 	SyncAuthority m_authority;
@@ -382,17 +403,21 @@ public:
 
 	Transform2DSync();
 
+	void tick() override;
 	void transmit_data(HSteamNetConnection destination) override;
 	void recieve_data(EntityUpdateInfo_t updateInfo) override;
 	void interpolate_origin(float delta);
 	bool has_authority();
 	bool has_target();
 	void update_transform_data();
+	void copy_transform();
 
-	Node2D* get_target();
+	bool get_interpolate() const;
+	Node2D* get_target() ;
 	Vector2 get_position() const;
 	SyncAuthority get_authority() const;
 
+	void set_interpolate(const bool &interpolate);
 	void set_target(Node2D* target);
 	void set_position(const Vector2 &position);
 	void set_authority(SyncAuthority authority);
@@ -473,7 +498,6 @@ private:
 
 	void SERVER_SIDE_connection_status_changed(SteamNetConnectionStatusChangedCallback_t *pInfo);
 	void SERVER_SIDE_poll_incoming_messages();
-	void SERVER_SIDE_run_tick();
 	void server_listen_loop();
 	void server_tick_loop();
 
@@ -495,8 +519,6 @@ private:
 
 	void CLIENT_SIDE_connection_status_changed(SteamNetConnectionStatusChangedCallback_t *pInfo);
 	void CLIENT_SIDE_poll_incoming_messages();
-	void CLIENT_SIDE_run_tick();
-	void CLIENT_SIDE_transmit_entity_data();
 	void client_listen_loop();
 	void client_tick_loop();
 

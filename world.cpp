@@ -59,7 +59,7 @@ void World::player_connecting(HSteamNetConnection playerConnection) {
 }
 
 void World::player_connected(HSteamNetConnection playerConnection) {
-	//Make sure the connecting player isnt already connected (i have no idea if/why it would here, but just in case :D )
+	//Make sure the connecting player isnt already connected (should be very rare, but just in case :D )
 	if (m_worldPlayerInfoByConnection.find(playerConnection) != m_worldPlayerInfoByConnection.end()) {
 		return;
 	}
@@ -94,14 +94,39 @@ void World::remove_player(HSteamNetConnection hConn) {
 	//Remove the player info from the connection keyed map and the id keyed map if they exist
 	if (m_worldPlayerInfoByConnection.has(hConn)) {
 		//Assign found value to a variable
-		Ref<PlayerInfo> info = m_worldPlayerInfoByConnection.get(hConn);
-		m_worldPlayerInfoById.erase(info->get_player_id());
+		Ref<PlayerInfo> playerInfo = m_worldPlayerInfoByConnection.get(hConn);
+		PlayerID_t  playerID = playerInfo->get_player_id();
+
+		//Try to get te zone the player is currently loaded into:
+		Zone *currentZone = playerInfo->get_current_loaded_zone();
+
+		//If the player is indeed in a zone, remove them from said zone
+		if(currentZone){
+			ZoneID_t zoneID = currentZone->get_zone_id();
+			currentZone->call_deferred("_remove_player", playerInfo);
+
+
+			//Tell remaining players in zone to remove the player locally
+			for(const KeyValue<PlayerID_t, Ref<PlayerInfo>> &playerInZone : currentZone->m_playersInZone){
+				//Skip the leaving player in case they are encountered
+				if(playerInZone.key == playerID){
+					continue;
+				}
+
+				HSteamNetConnection playerEndpoint = playerInZone.value->get_player_conn();
+
+				SteamNetworkingMessage_t* playerLeftMssg = create_small_message(PLAYER_LEFT_ZONE, playerID, zoneID, playerEndpoint);
+				send_message_reliable(playerLeftMssg);
+			}
+		}
+
+		m_worldPlayerInfoById.erase(playerInfo->get_player_id());
 		m_worldPlayerInfoByConnection.erase(hConn);
 	}
 
-	//Close connection witht the player
+	//Close connection with the player
 	if (!SteamNetworkingSockets()->CloseConnection(hConn, 0, nullptr, false)) {
-		print_line("Cannot close connection, it was already closed.");
+		ERR_PRINT("Cannot close connection, it was already closed.");
 	}
 
 	print_line("Connection with a player has been closed.");
@@ -225,11 +250,17 @@ void World::SERVER_SIDE_player_left_zone(const unsigned char *mssgData){
 	Zone* targetZone = GDNet::singleton->m_zoneRegistry.get(zoneLeft).zone;
 	//Get the player to remove from zone
 	Ref<PlayerInfo> player = targetZone->get_player(leavingPlayer);
+
 	//Remove the player from the zone
-	targetZone->remove_player(player);
+	targetZone->call_deferred("_remove_player", player);
 
 	//Tell remaining players in zone to remove the player locally
 	for(const KeyValue<PlayerID_t, Ref<PlayerInfo>> &playerInZone : targetZone->m_playersInZone){
+		//Skip the leaving player in case they are encountered
+		if(playerInZone.key == leavingPlayer){
+			continue;
+		}
+
 		HSteamNetConnection playerEndpoint = playerInZone.value->get_player_conn();
 
 		SteamNetworkingMessage_t* playerLeftMssg = create_small_message(PLAYER_LEFT_ZONE, leavingPlayer, zoneLeft, playerEndpoint);
@@ -324,10 +355,6 @@ void World::SERVER_SIDE_poll_incoming_messages() {
 	}
 }
 
-void World::SERVER_SIDE_run_tick() {
-	emit_signal("_server_side_transmit_entity_data");
-}
-
 void World::server_listen_loop() {
 	while (m_serverRunLoop) {
 		SERVER_SIDE_poll_incoming_messages();
@@ -340,10 +367,9 @@ void World::server_tick_loop() {
 	print_line("server tick loop started :)");
 
 	while(m_serverRunLoop){
-		SERVER_SIDE_run_tick();
+		emit_signal("_server_side_transmit_entity_data");
 
-		//Tickrate: 20hz
-		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 }
 //=======================================================================================================================//
@@ -555,15 +581,6 @@ void World::CLIENT_SIDE_poll_incoming_messages() {
 	}
 }
 
-void World::CLIENT_SIDE_run_tick() {
-	//Send information from player associated network entities
-	CLIENT_SIDE_transmit_entity_data();
-}
-
-void World::CLIENT_SIDE_transmit_entity_data() {
-	emit_signal("_client_side_transmit_entity_data");
-}
-
 void World::client_listen_loop() {
 	while (m_clientRunLoop) {
 		CLIENT_SIDE_poll_incoming_messages();
@@ -576,10 +593,9 @@ void World::client_tick_loop() {
 	print_line("client tick loop started :)");
 
 	while(m_clientRunLoop){
-		CLIENT_SIDE_run_tick();
+		emit_signal("_client_side_transmit_entity_data");
 
-		//Tickrate: 20hz
-		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 }
 
@@ -598,6 +614,7 @@ void World::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("unload_zone"), &World::unload_zone);
 
 	ADD_SIGNAL(MethodInfo("joined_world"));
+	ADD_SIGNAL(MethodInfo("left_world"));
 	ADD_SIGNAL(MethodInfo("loaded_zone", PropertyInfo(Variant::OBJECT, "zone", PROPERTY_HINT_RESOURCE_TYPE, "Node")));
 
 	ADD_SIGNAL(MethodInfo("_client_side_transmit_entity_data"));
@@ -738,6 +755,16 @@ void World::leave_world() {
 		return;
 	}
 
+	//Check for a zone to unload, and unload it if there is one
+	Zone* loadedZone = m_localPlayer->get_current_loaded_zone();
+	if(loadedZone){
+		//Remove the player from the zone locally
+		loadedZone->remove_player(m_localPlayer);
+
+		//Destroy the zone locally (for now)
+		loadedZone->uninstantiate_zone();
+	}
+
 	m_clientRunLoop = false;
 
 	//Stop the listen loop
@@ -755,6 +782,9 @@ void World::leave_world() {
 	m_worldConnection = k_HSteamNetConnection_Invalid;
 
 	GDNet::singleton->m_isClient = false;
+
+	//Inform signal connections that client has left the world
+	emit_signal("left_world");
 }
 
 bool World::load_zone_by_name(String zoneName) {

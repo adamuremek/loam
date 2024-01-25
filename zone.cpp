@@ -20,11 +20,15 @@ void Zone::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("instantiate_callback"), &Zone::instantiate_zone);
 	ClassDB::bind_method(D_METHOD("player_loaded_callback", "player_info"), &Zone::player_loaded_callback);
 
+	//Internal methods
+	ClassDB::bind_method(D_METHOD("_remove_player", "player_info"), &Zone::remove_player);
+
 	//Expose zone scene property to be set in the inspector
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "zone_scene", PROPERTY_HINT_RESOURCE_TYPE, "PackedScene"), "set_zone_scene", "get_zone_scene");
 
 	ADD_SIGNAL(MethodInfo("player_loaded_zone", PropertyInfo(Variant::INT, "player_id")));
 	ADD_SIGNAL(MethodInfo("player_left_zone", PropertyInfo(Variant::INT, "player_id")));
+
 }
 
 void Zone::_notification(int n_type) {
@@ -64,11 +68,13 @@ bool Zone::instantiate_zone() {
 	//Instantiate the actual packed scene
 	m_zoneInstance = m_zoneScene->instantiate();
 
+	//Indicate that the zone has been instantiated through the boolean flag
+	//Gotta call this before adding the instance to the scene otherwise if any entities are
+	//created, it will think that the zone doenst exist and throw an error.
+	m_instantiated = true;
+
 	//This is using the built in "add_child" mehtod to append the instance to the zone.
 	add_child(m_zoneInstance);
-
-	//Indicate that the zone has been instantiated through the boolean flag
-	m_instantiated = true;
 
 	//Raise the "loaded_zone" signal
 	GDNet::singleton->world->emit_signal("loaded_zone", this);
@@ -104,6 +110,7 @@ void Zone::add_player(Ref<PlayerInfo> playerInfo) {
 void Zone::remove_player(Ref<PlayerInfo> playerInfo) {
 	print_line("Starting player removal...");
 	PlayerID_t playerId = playerInfo->get_player_id();
+
 	if(!m_playersInZone.has(playerId)){
 		ERR_PRINT(vformat("No player wint ID %d is in zone %d!", playerId, m_zoneId));
 		return;
@@ -126,7 +133,7 @@ void Zone::remove_player(Ref<PlayerInfo> playerInfo) {
 	m_playersInZone.erase(playerId);
 
 	//Emit the "player_left_zone" signal
-	emit_signal("player_left_zone", playerInfo->get_player_id());
+	emit_signal("player_left_zone", playerId);
 
 	//Reset the player's zone info
 	print_line("cock");
@@ -255,12 +262,6 @@ void Zone::destroy_entity(Ref<EntityInfo> entityInfo) {
 		//Remove the entity reference stored in the zone
 		m_entitiesInZone.erase(networkId);
 	}
-
-	//If the entity is owned by a player, remove the reference from the player's data as well
-//	PlayerID_t owningPlayer = entityInfo->get_owner_id();
-//	if(m_playersInZone.has(owningPlayer)){
-//		m_playersInZone.get(owningPlayer)->m_playerInfo.ownedEntities.erase(networkId);
-//	}
 
 	//Disconnect the entity from data transmission signals
 	NetworkEntity* instanceAsEntity = entityInfo->m_entityInfo.entityInstance;

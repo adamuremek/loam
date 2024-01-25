@@ -4,6 +4,15 @@ const int NetworkModule::METADATA_SIZE = 1 + sizeof(ZoneID_t) + sizeof(EntityNet
 
 void NetworkModule::serialize_payload(EntityUpdateInfo_t &updateInfo) {}
 void NetworkModule::deserialize_payload(const EntityUpdateInfo_t &updateInfo) {}
+
+void NetworkModule::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("get_transmission_rate"), &NetworkModule::get_transmission_rate);
+	ClassDB::bind_method(D_METHOD("set_transmission_rate", "transmission_rate"), &NetworkModule::set_transmission_rate);
+
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "transmission_rate"), "set_transmission_rate", "get_transmission_rate");
+}
+
+void NetworkModule::tick() {}
 void NetworkModule::transmit_data(HSteamNetConnection destination) {}
 void NetworkModule::recieve_data(EntityUpdateInfo_t updateInfo) {}
 
@@ -53,3 +62,13 @@ EntityUpdateInfo_t NetworkModule::deserialize_update_metadata(const unsigned cha
 
 	return updateInfo;
 }
+
+int NetworkModule::get_transmission_rate() const {
+	return m_transmissionRate;
+}
+
+void NetworkModule::set_transmission_rate(const int &transmissionRate) {
+	m_transmissionRate = CLAMP(transmissionRate, 1, 80);
+	m_maxTickCount = 1000 / m_transmissionRate;
+}
+
