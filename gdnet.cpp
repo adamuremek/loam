@@ -40,8 +40,6 @@ bool GDNet::register_network_entities() {
 		return false;
 	}
 
-	//Define an id counter for assigning entity ids
-	EntityID_t newEntityId = 1U;
 
 	//Start directory listing
 	dir->list_dir_begin();
@@ -71,15 +69,18 @@ bool GDNet::register_network_entities() {
 				Node *root_node = network_entity_scene->instantiate();
 				if(root_node->get_class_name() == "NetworkEntity"){
 					NetworkEntityInfo_t info{};
-					info.id = newEntityId;
 					info.name = file_name.get_basename();
+					info.id = info.name.hash();
 					info.scene = network_entity_scene;
-					
-					//Register entity info
-					m_networkEntityRegistry.insert(newEntityId, info);
 
-					//Increment new entity id for future entities
-					newEntityId++;
+					//Make sure the name hash is not already a key in the hashmap (dublicate name value)
+					if(m_networkEntityRegistry.has(info.id)){
+						ERR_PRINT(vformat("ERROR: Cannot have two entites with the name '%s'!", info.name));
+						continue;
+					}
+
+					//Register entity info
+					m_networkEntityRegistry.insert(info.id, info);
 				}
 				root_node->queue_free();
 			}
